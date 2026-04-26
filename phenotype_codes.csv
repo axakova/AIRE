@@ -1,0 +1,17 @@
+symptom,ICD10code,total_in_UKBB,tier
+candidal stomatosis,B370,3792,1
+hypoparathyroidism,E20,198,1
+hypoparathyroidism_and_other,E21,3040,1
+primary adrenocortical insufficiency,E271,381,1
+Insulin-dependent diabetes mellitus,E10,7307,1
+chronic atrophic gastritis,K294,1034,1
+Vitamin B12 deficiency anaemia,D51,2208,1
+Keratitis,H16,754,2
+Vitiligo,L80,233,2
+Thyroiditis,E06,661,2
+"Chronic hepatitis, not elsewhere classified",K73,275,2
+Coeliac disease,K900,3493,2
+Systemic sclerosis,M34,590,2
+Seropositive rheumatoid arthritis,M05,2145,2
+"Non-infective gastro-enteritis and colitis, unspecified",K529,24626,2
+Other interstitial pulmonary diseases,J84,5126,2

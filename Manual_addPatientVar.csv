@@ -1,0 +1,8 @@
+﻿hgvs_pro,score,se,df,pos,numberofBioReps,llr,llrCI_lower,llrCI_upper,evidence_weight,ClinVarClass,SNVaccessible,PHD1variant,ACMG,Reclass,FinalClass,ReclassDueToFunctionalMap
+p.Ala58Val,0.221343057,0.191562126,32,58,2,0.497377201,-0.058,1.261,patho.support,NA,yes,no,PS3_supp+PM2_supp+PM3_strong+PP3_supp+PP4_mod,Yes,LP,Yes
+p.Arg132Ser,0.009228275,0.410354378,44,132,2,1.053301733,0.061,1.735,patho.moderate,NA,yes,no,PS3_mod+PM1_supp+PM2_supp+PP3_supp+PP4_mod,Yes,LP,Yes
+p.Asp34Asn,0.330569933,0.083590757,8,34,2,0.348102851,0.194,0.572,patho.support,NA,yes,no,PS3_supp+PM2_supp+PM3_supp+PP3_supp,Yes,VUS,Yes
+p.Gln69Pro,0.11783567,0.369306458,32,69,2,0.721894258,0.062,1.917,patho.moderate,NA,yes,no,PS3_strong+PM2_supp+PM3_supp+PP4_supp,Yes,LP,Yes
+p.Gly208Trp,0.199385585,0.079342615,16,208,2,0.539411727,0.398,1.023,patho.support,NA,yes,no,PS3_supp+PM2-supp+PM5_supp+PP3_supp+PP4_supp,Yes,VUS,Yes
+p.Gly208Val,0.173284682,0.168979704,64,208,2,0.594493357,-0.068,1.055,patho.support,NA,yes,no,PS3_mod+PM2_supp+PM3_mod+PP3_supp+PP4_supp,Yes,LP,Yes
+p.Thr68Pro,0.108036671,0.16308135,28,68,2,0.74487372,0.287,1.211,patho.moderate,NA,yes,no,PS3_mod+PM3_mod+PM2_supp+PP4_supp,Yes,LP,Yes

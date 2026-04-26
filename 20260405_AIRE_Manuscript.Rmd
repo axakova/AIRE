@@ -1,0 +1,3656 @@
+---
+title: "20260405_AIRE_Manuscript"
+author: "AxakovaA"
+date: '2026-04-26'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_packages}
+library(ggplot2)
+library(data.table)
+library(stringr)
+library(dplyr)
+library(mgsub)
+library(ggpubr)
+library(tidyr)
+library(ggVennDiagram)
+library(forcats)
+library(tibble)
+library(ggvenn)
+library(RColorBrewer)
+library(zoo)
+library(reshape2)
+library(readr)
+library(scales)
+library(ggalluvial)
+library(ggrepel)
+```
+
+
+```{r preliminary_data}
+#this chunk generates Figure S2
+
+#read data
+df <- read.table("gate2mch.txt", header = TRUE, stringsAsFactors = FALSE)
+dfv1 <- df[df$vector == 1,]
+dfv2 <- df[(df$vector == 2) & (df$day == 9),]
+dfv2 <- dfv2[!dfv2$variant == "T183N",]
+
+# Calculate SD and mean of each variant
+dfv2_summary <- dfv2 %>%
+  group_by(variant) %>%
+  summarise(
+    mean_gatefreq = mean(gatefreq),
+    sd_gatefreq = sd(gatefreq)
+  )
+
+# Define a function to calculate the t-statistic and p-value
+t_test_manual <- function(mean1, sd1, n1, mean2, sd2, n2) {
+  # Calculate the t-statistic
+  t_stat <- (mean1 - mean2) / sqrt((sd1^2 / n1) + (sd2^2 / n2))
+  
+  # Calculate the degrees of freedom
+  df <- ((sd1^2 / n1) + (sd2^2 / n2))^2 / ((sd1^2 / n1)^2 / (n1 - 1) + (sd2^2 / n2)^2 / (n2 - 1))
+  
+  # Calculate the p-value
+  p_value <- 2 * pt(abs(t_stat), df = df, lower.tail = FALSE)
+  
+  return(list(t_stat = t_stat, p_value = p_value))
+}
+
+# Create a file to write the output
+output_file <- file("output.csv", "w")
+
+# Perform the t-test manually
+for (i in 1:nrow(dfv2_summary)) {
+  if (dfv2_summary$variant[i]!= "WT" && dfv2_summary$variant[i]!= "empty_vector") {
+    # Perform the t-test manually between WT and current row
+    wt_result <- t_test_manual(dfv2_summary$mean_gatefreq[dfv2_summary$variant == "WT"], 
+                               dfv2_summary$sd_gatefreq[dfv2_summary$variant == "WT"], 
+                               3, 
+                               dfv2_summary$mean_gatefreq[i], 
+                               dfv2_summary$sd_gatefreq[i], 
+                               3)
+    
+    # Perform the t-test manually between empty_vector and current row
+    ev_result <- t_test_manual(dfv2_summary$mean_gatefreq[dfv2_summary$variant == "empty_vector"], 
+                               dfv2_summary$sd_gatefreq[dfv2_summary$variant == "empty_vector"], 
+                               3, 
+                               dfv2_summary$mean_gatefreq[i], 
+                               dfv2_summary$sd_gatefreq[i], 
+                               3)
+    
+    # Multiply the p-value by 2 to bonferroni correct for 2 tests per variant
+    wt_result$p_value <- wt_result$p_value * 2
+    ev_result$p_value <- ev_result$p_value * 2
+    
+    # Write the results to the output file
+    writeLines(c(paste("Results for", dfv2_summary$variant[i]), 
+                 paste("WT: t-statistic =", wt_result$t_stat, ", p-value =", wt_result$p_value), 
+                 paste("empty_vector: t-statistic =", ev_result$t_stat, ", p-value =", ev_result$p_value), 
+                 ""), output_file)
+  }
+}
+
+# Perform the t-test manually between empty_vector and WT
+ev_wt_result <- t_test_manual(dfv2_summary$mean_gatefreq[dfv2_summary$variant == "empty_vector"], 
+                              dfv2_summary$sd_gatefreq[dfv2_summary$variant == "empty_vector"], 
+                              3, 
+                              dfv2_summary$mean_gatefreq[dfv2_summary$variant == "WT"], 
+                              dfv2_summary$sd_gatefreq[dfv2_summary$variant == "WT"], 
+                              3)
+
+# Multiply the p-value by 2 to bonferroni correct for 2 tests per variant
+ev_wt_result$p_value <- ev_wt_result$p_value * 2
+
+# Write the results to the output file
+writeLines(c(paste("Results for empty_vector vs WT"), 
+             paste("t-statistic =", ev_wt_result$t_stat, ", p-value =", ev_wt_result$p_value), 
+             ""), output_file)
+
+# Close the output file
+close(output_file)
+
+dfv2_summary$variant <- factor(dfv2_summary$variant, levels = c('empty_vector','WT', 'W78R','R92W', 'S278R', 'T183N', 'P400L', 'A403T', 'D503N'))
+dfv2_summary$type <- ifelse(dfv2_summary$variant %in% c('empty_vector'), 'empty_vector', 
+                             ifelse(dfv2_summary$variant == 'WT', 'WT', 
+                                    ifelse(dfv2_summary$variant %in% c('R92W', 'W78R'), 'pathogenic', 'benign')))
+
+# Create the plot
+p <- ggplot(dfv2_summary, aes(x = variant, y = mean_gatefreq, fill = type)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  geom_errorbar(aes(ymin = mean_gatefreq - sd_gatefreq, ymax = mean_gatefreq + sd_gatefreq), width = 0.2, position = position_dodge(width = 0.9)) + 
+  labs(x = "variant", y = "gate frequency") + 
+  scale_y_continuous(expand = c(0, 0)) + 
+  scale_fill_manual(values = c("empty_vector" = "gray", "WT" = "black", "pathogenic" = "magenta", "benign" = "darkgreen")) + 
+  theme_minimal(base_size = 15)
+
+ggsave(filename = "preliminary_barplot.pdf", p, width = 8, height = 5)
+print(p)
+```
+```{r nonsense_and_synonymous_AIRE_variant_distribution}
+#this chunk generates nonsense and synonymous distributions for Figure S5B and Figure S5C
+
+#load map
+scores <- read.csv("20231018_WholeMap.csv", header=TRUE)
+#subset only synon and nonsense
+scores_non_synon <- scores %>%
+  filter(grepl("=", hgvs_pro) | grepl("Ter", hgvs_pro))
+#draw histogram
+AIRE_non_synon <- ggplot(scores_non_synon, aes(x = score, fill = ifelse(grepl("=", hgvs_pro), "Synonymous", "Nonsense"))) + 
+  geom_histogram(binwidth = 0.05, alpha = 0.5, position = "identity", color = NA) + 
+  scale_fill_manual(values = c("magenta", "green"), name = "") + 
+  labs(x= "map functional score") +
+  theme_minimal(base_size = 15)
+#print to console
+print(AIRE_non_synon)
+#save plots
+ggsave(AIRE_non_synon, device = "pdf", filename = "AIRE_dist_non_synon.pdf", width = 6, height = 5)
+
+#remove nonsense in last 8 amino acids since poorly detected
+#extract the position
+scores_non_synon$position <- as.numeric(sub("p\\.\\D+(\\d+).*", "\\1", scores_non_synon$hgvs_pro))
+#filter out Ter variants from position 537 onward
+scores_non_synon_filtered <- subset(scores_non_synon, !(grepl("Ter", hgvs_pro) & position >= 537))
+
+#draw histogram
+AIRE_non_synon_nolast8non <- ggplot(scores_non_synon_filtered, aes(x = score, fill = ifelse(grepl("=", hgvs_pro), "Synonymous", "Nonsense"))) + 
+  geom_histogram(binwidth = 0.05, alpha = 0.5, position = "identity", color = NA) + 
+  scale_fill_manual(values = c("magenta", "green"), name = "") + 
+  labs(x= "map functional score") +
+  theme_minimal(base_size = 15)
+#print to console
+print(AIRE_non_synon_nolast8non)
+#save plots
+ggsave(AIRE_non_synon_nolast8non, device = "pdf", filename = "AIRE_dist_non_synon_nolast8aa.pdf", width = 6, height = 5)
+
+#how many scores >1?
+scores_above_1 <- scores[scores$score>1,]
+
+# Wilcoxon analysis (one-sided: nonsense < synonymous)
+# First dataset: all nonsense + synonymous
+category1_data <- subset(scores_non_synon, grepl("=", hgvs_pro))   # Synonymous
+category2_data <- subset(scores_non_synon, grepl("Ter", hgvs_pro)) # Nonsense
+
+test_result_all <- wilcox.test(category2_data$score, category1_data$score,
+                               mu = 0, alt = "two.sided", conf.int = TRUE, conf.level = 0.95,
+                               paired = FALSE, correct = TRUE)
+print(test_result_all)
+
+# Second dataset: filtered (no nonsense in last 8 amino acids)
+category1_data_filt <- subset(scores_non_synon_filtered, grepl("=", hgvs_pro))   # Synonymous
+category2_data_filt <- subset(scores_non_synon_filtered, grepl("Ter", hgvs_pro)) # Nonsense
+
+test_result_filt <- wilcox.test(category2_data_filt$score, category1_data_filt$score,
+                                mu = 0, alt = "two.sided", conf.int = TRUE, conf.level = 0.95,
+                                paired = FALSE, correct = TRUE)
+print(test_result_filt)
+
+#summarize medians
+median_summary <- data.frame(
+  Dataset = c("All", "Filtered_noLast8"),
+  Synonymous = c(
+    median(category1_data$score, na.rm = TRUE),
+    median(category1_data_filt$score, na.rm = TRUE)
+  ),
+  Nonsense = c(
+    median(category2_data$score, na.rm = TRUE),
+    median(category2_data_filt$score, na.rm = TRUE)
+  )
+)
+
+print(median_summary)
+```
+
+```{r biological_replicate_comparison, fig.show="asis", out.width="50%", echo=FALSE}
+#this chunk generates biological replicate correlation for Figure S5A and describes the command line script needed to draw the map in Figure 1B
+
+#read in redos of region 1
+rep1_Reg1 <- read.csv("Rep1Redo_modal_Rep1_select_t1_simple_aa.csv", comment.char = "#")
+rep2_Reg1 <- read.csv("modal_Rep2_select_t1_simple_aa.csv", comment.char = "#")
+
+#read in rest of map
+#need to eliminate region 1 from these scores - region 1 was re-sequenced, and needs to be replaced
+rep1_other <- read.csv("rep1_modal_binfour_t1_simple_aa.csv", comment.char = "#")
+rep2_other <- read.csv("rep2_modal_binfour_t1_simple_aa.csv", comment.char = "#")
+
+# Extract position using regular expression
+pos_extract <- function(data) {
+regexp <- "[[:digit:]]+"
+data$pos <- str_extract(data$hgvs_pro, regexp)
+data$pos <- as.numeric(data$pos)
+return(data)
+}
+
+rep1_Reg1 <- pos_extract(rep1_Reg1)
+rep2_Reg1 <- pos_extract(rep2_Reg1)
+rep1_other <- pos_extract(rep1_other)
+rep2_other <- pos_extract(rep2_other)
+
+#find max position in reg 1
+max(rep1_Reg1$pos)
+max(rep2_Reg1$pos)
+
+#remove region 1 from reps
+rep1_other <- rep1_other[rep1_other$pos > 182,]
+rep2_other <- rep2_other[rep2_other$pos > 182,]
+
+colnames(rep1_Reg1)[colnames(rep1_Reg1) == "score"] <- "rep1"
+colnames(rep2_Reg1)[colnames(rep2_Reg1) == "score"] <- "rep2"
+colnames(rep1_other)[colnames(rep1_other) == "score"] <- "rep1"
+colnames(rep2_other)[colnames(rep2_other) == "score"] <- "rep2"
+
+merge_Reg1 <- merge(rep1_Reg1, rep2_Reg1, by = "hgvs_pro")
+merge_rest <- merge(rep1_other, rep2_other, by = "hgvs_pro")
+
+#for further analysis, save map replicates 
+Rep1_inFull <- rbind(rep1_Reg1, rep1_other)
+Rep2_inFull <- rbind(rep2_Reg1, rep2_other)
+colnames(Rep1_inFull)[colnames(Rep1_inFull) == "rep1"] <- "score"
+colnames(Rep2_inFull)[colnames(Rep2_inFull) == "rep2"] <- "score"
+write.csv(file = "Rep1_AIRE_forMap.csv", Rep1_inFull, row.names=FALSE)
+write.csv(file = "Rep2_AIRE_forMap.csv", Rep2_inFull, row.names=FALSE)
+#have a set that only includes variants mentioned in both replicates
+shared_variants <- intersect(Rep1_inFull$hgvs_pro, Rep2_inFull$hgvs_pro)
+#subset each replicate to only include shared variants
+Rep1_common <- Rep1_inFull[Rep1_inFull$hgvs_pro %in% shared_variants, ]
+Rep2_common <- Rep2_inFull[Rep2_inFull$hgvs_pro %in% shared_variants, ]
+write.csv(file = "Rep1_AIRE_forMap_onlyinBothReps.csv", Rep1_common, row.names=FALSE)
+write.csv(file = "Rep2_AIRE_forMap_onlyinBothReps.csv", Rep2_common, row.names=FALSE)
+#extract uncommon variants and make separate set that will be read later for the final MaveDB table
+Rep1_uncommon <- Rep1_inFull[!(Rep1_inFull$hgvs_pro %in% shared_variants), ]
+Rep2_uncommon <- Rep2_inFull[!(Rep2_inFull$hgvs_pro %in% shared_variants), ]
+#merge uncommon and save to be added later
+UncommonVariants_Merged_bothReps <- rbind(Rep1_uncommon, Rep2_uncommon)
+table(duplicated(Rep1_common$hgvs_pro))
+table(duplicated(Rep2_common$hgvs_pro))
+table(duplicated(UncommonVariants_Merged_bothReps$hgvs_pro))
+write.csv(UncommonVariants_Merged_bothReps, "uncommonReps.csv", row.names = FALSE)
+#mergemaps, test using non-intersected version for map drawing, then intersected version for the set that will be used for clinical variants
+#tsm mergeMaps --maps Rep1_AIRE_forMap.csv Rep2_AIRE_forMap.csv
+#output is called: Both_Reps_nonIntersect_merged_map.csv
+#tsm mergeMaps --maps Rep1_AIRE_forMap_onlyinBothReps.csv Rep2_AIRE_forMap_onlyinBothReps.csv
+#output is called: Rep_Intersection_merged_map.csv
+
+#these are the scripts used to draw the map. the one with both reps included, even if only seen once, is what was used in the manuscript
+#tsm mavevisLocal -i '/Users/anna/Desktop/AIRE_Manuscript/Both_Reps_nonIntersect_merged_map.csv' -p /Users/anna/Desktop/AIRE_Manuscript/AIRE_All_Rep1_modal.json
+#tsm mavevisLocal -i '/Users/anna/Desktop/AIRE_Manuscript/Rep_Intersection_merged_map.csv' -p /Users/anna/Desktop/AIRE_Manuscript/AIRE_All_Rep1_modal.json
+
+all <- rbind(merge_Reg1, merge_rest)
+#filter for -2
+all <- all[all$rep1>-2&all$rep2>-2,]
+
+#extract only missense variants
+all_missense <- all[!(grepl("Ter", all$hgvs_pro)|grepl("=", all$hgvs_pro)),]
+
+# Calculate the correlation and p-value
+cor_test <- cor.test(all$rep1, all$rep2, method = "spearman")
+cor_test
+
+# Extract the correlation and p-value
+correlation <- cor_test$estimate
+p_value <- cor_test$p.value
+
+# Create the biological replicate plot
+p <- ggplot(all, aes(x=rep1, y=rep2)) +
+  geom_point(alpha = 0.05) +
+  theme_minimal(base_size = 15) +
+  labs(x="replicate 1 AIRE functional variant score", y="replicate 2 AIRE functional variant score")
+
+ggsave(filename = "biorepCompare_all.pdf", p, width = 4, height = 5)
+print(p)
+###################missense####################
+# Calculate the correlation and p-value
+cor_test_missense <- cor.test(all_missense$rep1, all_missense$rep2)
+cor_test_missense
+
+# Extract the correlation and p-value
+correlation <- cor_test_missense$estimate
+p_value <- cor_test_missense$p.value
+
+# Create the ggplot
+p_missense <- ggplot(all_missense, aes(x=rep1, y=rep2)) +
+  geom_point(alpha = 0.05) +
+  theme_minimal(base_size = 15) +
+  labs(x="replicate 1 AIRE functional variant score", y="replicate 2 AIRE functional variant score")
+
+ggsave(filename = "biorepCompare_missense.pdf", p_missense, width = 4, height = 5)
+print(p_missense)
+```
+
+```{r process_map, fig.show="asis", out.width="50%", echo=FALSE}
+#this chunk is an analysis script to process map scores to missense and add from and to amino acid columns
+map <- scores
+#map <- map[map$score>-4,]
+
+process_map <- function(map) {
+  # Extract missense mutations
+  map_missense <- map[!(grepl("=", map$hgvs_pro) | grepl("Ter", map$hgvs_pro)),]
+  
+  # Extract 'from' column
+  map_missense$from <- substr(map_missense$hgvs_pro, 3, 5)
+  
+  # Extract position using regular expression
+  regexp <- "[[:digit:]]+"
+  map_missense$pos <- str_extract(map_missense$hgvs_pro, regexp)
+  
+  # Annotate by amino acid type
+map_missense <- map_missense %>% mutate(aa_type_From = case_when(
+    from %in% c("Ala", "Gly", "Val", "Leu", "Ile", "Met", "Phe", "Trp", "Tyr") ~ "hydrophobic",
+    from %in% c("Ser", "Thr", "Asn", "Gln", "Cys") ~ "polar",
+    from %in% c("Asp", "Glu") ~ "neg_charged",
+    from %in% c("Arg", "Lys", "His") ~ "pos_charged",
+    from %in% c("Pro") ~ "proline",
+    TRUE ~ "unknown"
+  ))
+
+  # Add column for 'change To'
+  map_missense$changeTo <- substr(map_missense$hgvs_pro, nchar(map_missense$hgvs_pro) - 2, nchar(map_missense$hgvs_pro))
+  
+  # Annotate by amino acid type for 'change To'
+  map_missense <- map_missense %>%
+    mutate(aa_type_To = case_when(
+      changeTo %in% c("Ala", "Gly", "Val", "Leu", "Ile", "Met", "Phe", "Trp", "Tyr") ~ "hydrophobic",
+      changeTo %in% c("Ser", "Thr", "Asn", "Gln", "Cys") ~ "polar",
+      changeTo %in% c("Asp", "Glu") ~ "neg_charged",
+      changeTo %in% c("Arg", "Lys", "His") ~ "pos_charged",
+      changeTo %in% c("Pro") ~ "proline",
+      TRUE ~ "unknown"
+    ))
+  
+  return(map_missense)
+}
+
+#Process map
+map_processed <- process_map(map)
+```
+
+```{r from_and_to_simple_functions_and_run, fig.show="asis", out.width="50%", echo=FALSE}
+#This chunk generates Figure S8
+
+##############Base function: draw from which to which?############
+# Function to perform plot, statistical testing, and result exporting
+##########from each amino acid type instead############
+#give aa categories classifications
+assign_aa_category <- function(aa_vector) {
+  dplyr::case_when(
+    aa_vector %in% c("Ala", "Gly", "Val", "Leu", "Ile", "Met", "Phe", "Trp", "Tyr") ~ "hydrophobic",
+    aa_vector %in% c("Ser", "Thr", "Asn", "Gln", "Cys") ~ "polar",
+    aa_vector %in% c("Asp", "Glu") ~ "neg_charged",
+    aa_vector %in% c("Arg", "Lys", "His") ~ "pos_charged",
+    aa_vector %in% c("Pro") ~ "proline",
+    TRUE ~ "other"
+  )
+}
+#order the amino acids by category
+get_ordered_aa_levels <- function() {
+  c(
+    "Ala", "Gly", "Val", "Leu", "Ile", "Met", "Phe", "Trp", "Tyr",    # hydrophobic
+    "Ser", "Thr", "Asn", "Gln", "Cys",                                # polar
+    "Asp", "Glu",                                                     # neg_charged
+    "Arg", "Lys", "His",                                              # pos_charged
+    "Pro"                                                             # proline
+  )
+}
+
+analyze_data_FROM_AA <- function(data, title, width, height) {
+  #arrange the categories
+  aa_levels <- get_ordered_aa_levels()
+  data$from <- factor(data$from, levels = aa_levels)
+  data$change_to <- factor(data$changeTo, levels = aa_levels)
+  #give class to categories
+  data$category_from <- assign_aa_category(data$from)
+  data$category_to <- assign_aa_category(data$changeTo)
+
+  #eliminate conserved-type substitutions (e.g. polar to polar)
+  data <- data[!(data$category_from == data$category_to),]
+  
+p <- ggplot(data, aes(x = from, y = score, fill = category_from)) + 
+  geom_boxplot(outlier.size=0.5) +
+  labs(title = title, x = "from amino acid", y = "functional score", fill = "category_from") +
+  theme_minimal(base_size = 17) +
+  scale_fill_manual(values = c(
+    "hydrophobic" = "#4477AA",
+    "polar" = "#EE6677",
+    "neg_charged" = "#228833",
+    "pos_charged" = "#CCBB44",
+    "proline" = "#66CCEE",
+    "other" = "AA3377"
+  ))
+print(p)
+  
+  ggsave(filename = paste0(title, ".pdf"), width = width, height = height)
+  # Get all unique categories
+  categories <- unique(data$from)
+  
+  # Initialize an empty dataframe to store the results
+  results <- data.frame(Category1 = character(), Category2 = character(), 
+                        p.value = numeric(), estimate = numeric(), 
+                        Median1 = numeric(), Median2 = numeric())
+  
+  # Loop through each combination of two categories
+  for(i in 1:(length(categories)-1)){
+    for(j in (i+1):length(categories)){
+      category1 <- categories[i]
+      category2 <- categories[j]
+      
+      # Subset the data for the two categories
+      category1_data <- data[data$from == category1,]
+      category2_data <- data[data$from == category2,]
+      
+      # Perform the Wilcoxon test
+      test_result <- wilcox.test(category1_data$score, category2_data$score, 
+                                 mu=0, alt="two.sided", conf.int=T, conf.level = 0.95, 
+                                 paired=F, correct=T)
+      
+      # Extract the p-value and estimate
+      p_value <- test_result$p.value
+      estimate <- test_result$estimate
+      
+      # Calculate medians
+      median1 <- median(category1_data$score, na.rm = TRUE)
+      median2 <- median(category2_data$score, na.rm = TRUE)
+      
+      # Add the results to the dataframe
+      results <- rbind(results, data.frame(Category1 = category1, Category2 = category2, 
+                                           p.value = p_value, estimate = estimate, 
+                                           Median1 = median1, Median2 = median2))
+    }
+  }
+  
+  # Get the number of tests performed
+  n_tests <- nrow(results)
+  # Apply the Bonferroni correction
+  results$p.value <- p.adjust(results$p.value, method = "bonferroni")
+  # Output only significant results
+  sig_results <- results[results$p.value < 0.05,]
+  # Write significant results to file
+  write.csv(file = paste0(title, ".csv"), sig_results, row.names = FALSE)
+  
+  # Print the medians
+  cat("Medians of categories:\n")
+  for(category in categories) {
+    median_value <- median(data[data$from == category,]$score, na.rm = TRUE)
+    cat("Category:", category, "Median:", median_value, "\n")
+  }
+}
+
+##########TO each amino acid instead############
+analyze_data_TO_AA <- function(data, title, width, height) {
+  #arrange the categories
+  aa_levels <- get_ordered_aa_levels()
+  data$from <- factor(data$from, levels = aa_levels)
+  data$change_to <- factor(data$changeTo, levels = aa_levels)
+  #give class to categories
+  data$category_from <- assign_aa_category(data$from)
+  data$category_to <- assign_aa_category(data$changeTo)
+
+  #eliminate conserved-type substitutions (e.g. polar to polar)
+  data <- data[!(data$category_from == data$category_to),]
+  
+p <- ggplot(data, aes(x = change_to, y = score, fill = category_to)) + 
+  geom_boxplot(outlier.size=0.5) +
+  labs(title = title, x = "from amino acid", y = "functional score", fill = "category_to") +
+  theme_minimal(base_size = 17) +
+  scale_fill_manual(values = c(
+    "hydrophobic" = "#4477AA",
+    "polar" = "#EE6677",
+    "neg_charged" = "#228833",
+    "pos_charged" = "#CCBB44",
+    "proline" = "#66CCEE",
+    "other" = "AA3377"
+  ))
+print(p)
+  
+  ggsave(filename = paste0(title, ".pdf"), width = width, height = height)
+  # Get all unique categories
+  categories <- unique(data$change_to)
+  
+  # Initialize an empty dataframe to store the results
+  results <- data.frame(Category1 = character(), Category2 = character(), 
+                        p.value = numeric(), estimate = numeric(), 
+                        Median1 = numeric(), Median2 = numeric())
+  
+  # Loop through each combination of two categories
+  for(i in 1:(length(categories)-1)){
+    for(j in (i+1):length(categories)){
+      category1 <- categories[i]
+      category2 <- categories[j]
+      
+      # Subset the data for the two categories
+      category1_data <- data[data$change_to == category1,]
+      category2_data <- data[data$change_to == category2,]
+      
+      # Perform the Wilcoxon test
+      test_result <- wilcox.test(category1_data$score, category2_data$score, 
+                                 mu=0, alt="two.sided", conf.int=T, conf.level = 0.95, 
+                                 paired=F, correct=T)
+      
+      # Extract the p-value and estimate
+      p_value <- test_result$p.value
+      estimate <- test_result$estimate
+      
+      # Calculate medians
+      median1 <- median(category1_data$score, na.rm = TRUE)
+      median2 <- median(category2_data$score, na.rm = TRUE)
+      
+      # Add the results to the dataframe
+      results <- rbind(results, data.frame(Category1 = category1, Category2 = category2, 
+                                           p.value = p_value, estimate = estimate, 
+                                           Median1 = median1, Median2 = median2))
+    }
+  }
+  
+  # Get the number of tests performed
+  n_tests <- nrow(results)
+  # Apply the Bonferroni correction
+  results$p.value <- p.adjust(results$p.value, method = "bonferroni")
+  # Output only significant results
+  sig_results <- results[results$p.value < 0.05,]
+  # Write significant results to file
+  write.csv(file = paste0(title, ".csv"), sig_results, row.names = FALSE)
+  
+  # Print the medians
+  cat("Medians of categories:\n")
+  for(category in categories) {
+    median_value <- median(data[data$change_to == category,]$score, na.rm = TRUE)
+    cat("Category:", category, "Median:", median_value, "\n")
+  }
+}
+
+####Run these functions####
+analyze_data_FROM_AA(map_processed, "Map Score FROM Amino Acid", width = 10, height = 6)
+analyze_data_TO_AA(map_processed, "Map Score TO Amino Acid", width = 10, height = 6)
+
+#count frequency of every amino acid of AIRE
+AIRE <- "MATDAALRRLLRLHRTEIAVAVDSAFPLLHALADHDVVPEDKFQETLHLKEKEGCPQAFHALLSWLLTQDSTAILDFWRVLFKDYNLERYGRLQPILDSFPKDVDLSQPRKGRKPPAVPKALVPPPRLPTKRKASEEARAAAPAALTPRGTASPGSQLKAKPPKKPESSAEQQRLPLGNGIQTMSASVQRAVAMSSGDVPGARGAVEGILIQQVFESGGSKKCIQVGGEFYTPSKFEDSGSGKNKARSSSGPKPLVRAKGAQGAAPGGGEARLGQQGSVPAPLALPSDPQLHQKNEDECAVCRDGGELICCDGCPRAFHLACLSPPLREIPSGTWRCSSCLQATVQEVQPRAEEPRPQEPPVETPLPPGLRSAGEEVRGPPGEPLAGMDTTLVYKHLPAPPSAAPLPGLDSSALHPLLCVGPEGQQNLAPGARCGVCGDGTDVLRCTHCAAAFHWRCHFPAGTSRPGTGLRCRSCSGDVTPAPVEGVLAPSPARLAPGPAKDDTASHEPALHRDDLESLLSEHTFDGILQWAIQSMARPAAPFPS"
+
+#split amino acid code to amino acids
+amino_acids <- strsplit(AIRE, "")[[1]]
+#count each amino acid
+aa_counts <- table(amino_acids)
+#print counts
+aa_counts <- aa_counts[order(names(aa_counts))]
+print(aa_counts)
+
+```
+
+```{r FUNC_process_map}
+#this chunk runs a function to process map to change variant format and only keep missense variants
+
+process_map <- function(map) {
+  # Extract missense mutations
+  map_missense <- map[!(grepl("=", map$hgvs_pro) | grepl("Ter", map$hgvs_pro)),]
+  
+  # Extract 'from' column
+  map_missense$from <- substr(map_missense$hgvs_pro, 3, 5)
+  
+  # Extract position using regular expression
+  regexp <- "[[:digit:]]+"
+  map_missense$pos <- str_extract(map_missense$hgvs_pro, regexp)
+  
+  # Annotate by amino acid type
+map_missense <- map_missense %>% mutate(aa_type_From = case_when(
+    from %in% c("Ala", "Gly", "Val", "Leu", "Ile", "Met", "Phe", "Trp", "Tyr") ~ "hydrophobic",
+    from %in% c("Ser", "Thr", "Asn", "Gln", "Cys") ~ "polar",
+    from %in% c("Asp", "Glu") ~ "neg_charged",
+    from %in% c("Arg", "Lys", "His") ~ "pos_charged",
+    from %in% c("Pro") ~ "proline",
+    TRUE ~ "unknown"
+  ))
+
+  # Add column for 'change To'
+  map_missense$changeTo <- substr(map_missense$hgvs_pro, nchar(map_missense$hgvs_pro) - 2, nchar(map_missense$hgvs_pro))
+  
+  # Annotate by amino acid type for 'change To'
+  map_missense <- map_missense %>%
+    mutate(aa_type_To = case_when(
+      changeTo %in% c("Ala", "Gly", "Val", "Leu", "Ile", "Met", "Phe", "Trp", "Tyr") ~ "hydrophobic",
+      changeTo %in% c("Ser", "Thr", "Asn", "Gln", "Cys") ~ "polar",
+      changeTo %in% c("Asp", "Glu") ~ "neg_charged",
+      changeTo %in% c("Arg", "Lys", "His") ~ "pos_charged",
+      changeTo %in% c("Pro") ~ "proline",
+      TRUE ~ "unknown"
+    ))
+  
+  return(map_missense)
+}
+
+map_processed <- process_map(map)
+```
+
+```{r FUNC_analyze_data_FROM}
+#this chunk generates functions for amino acid substitutions from and to amino acid types, but isn't used directly as a figure
+
+analyze_data_FROM <- function(data, title, width, height) {
+  #remove conservatives
+  data <- data[data$aa_type_To != data$aa_type_From,]
+  # Create the initial plot
+  p <- ggplot(data, aes(x = aa_type_From, y = score)) + 
+    geom_boxplot(outlier.size = 0.3) +
+    labs(x = "from amino acid type", y = "variant functional score") +
+    theme_minimal(base_size = 17)
+  
+  # Get all unique categories
+  categories <- unique(data$aa_type_From)
+  
+  # Initialize an empty dataframe to store the results
+  results <- data.frame(Category1 = character(), Category2 = character(), 
+                        p.value = numeric(), estimate = numeric(), 
+                        Median1 = numeric(), Median2 = numeric(), stringsAsFactors = FALSE)
+  
+  # List to store comparisons for stat_compare_means
+  comparisons <- list()
+  
+  # Loop through each combination of two categories
+  for(i in 1:(length(categories)-1)){
+    for(j in (i+1):length(categories)){
+      category1 <- categories[i]
+      category2 <- categories[j]
+      
+      # Subset the data for the two categories
+      category1_data <- data[data$aa_type_From == category1,]
+      category2_data <- data[data$aa_type_From == category2,]
+      
+      # Perform the Wilcoxon test
+      test_result <- wilcox.test(category1_data$score, category2_data$score, 
+                                 mu=0, alt="two.sided", conf.int=T, conf.level = 0.95, 
+                                 paired=F, correct=T)
+      
+      # Extract the p-value and estimate
+      p_value <- test_result$p.value
+      estimate <- test_result$estimate
+      
+      # Calculate medians
+      median1 <- median(category1_data$score, na.rm = TRUE)
+      median2 <- median(category2_data$score, na.rm = TRUE)
+      
+      # Add the results to the dataframe
+      results <- rbind(results, data.frame(Category1 = category1, Category2 = category2, 
+                                           p.value = p_value, estimate = estimate, 
+                                           Median1 = median1, Median2 = median2))
+    }
+  }
+  
+  # Apply the Bonferroni correction
+  results$p.value <- p.adjust(results$p.value, method = "bonferroni")
+  
+  # Filter only significant results
+  sig_results <- results[results$p.value < 0.05,]
+  
+  # Write significant results to file
+  write.csv(file = paste0(title, ".csv"), sig_results, row.names = FALSE)
+  
+  # Add significance bars to the plot for significant results
+  if (nrow(sig_results) > 0) {
+    sig_comparisons <- mapply(function(cat1, cat2) c(cat1, cat2), 
+                              sig_results$Category1, sig_results$Category2, 
+                              SIMPLIFY = FALSE)
+    p <- p + stat_compare_means(comparisons = sig_comparisons, method = "wilcox.test", 
+                                label = "p.signif", p.adjust.method = "bonferroni")
+  }
+  
+  # Print the plot to PDF
+  ggsave(p, device = "pdf", filename = paste0(title, ".pdf"), width = width, height = height)
+
+  # Print the plot to the console
+  print(p)
+  
+  # Print the medians
+  cat("Medians of categories:\n")
+  for(category in categories) {
+    median_value <- median(data[data$aa_type_From == category,]$score, na.rm = TRUE)
+    cat("Category:", category, "Median:", median_value, "\n")
+  }
+}
+
+analyze_data_FROM(map_processed, "missense score FROM amino acid type", width = 6, height = 6)
+```
+```{r FUNC_analyze_data_TO_simple, echo = FALSE, fig.show="hold", out.width="50%"}
+#This chunk generates Figure S9
+#to amino acid simplified
+analyze_data_TO_simple <- function(data, To_category, pdf_filename, csv_filename) {
+  df_name <- deparse(substitute(data))
+  
+  # Remove conservatives (change from same category to same category)
+  data <- data[data$aa_type_To != data$aa_type_From,]
+  
+  # Create a simple category variable
+  data <- data %>%
+    mutate(aa_type_To_Simple = ifelse(aa_type_To == To_category, To_category, paste("not", To_category, sep = " ")))
+
+  # Set the order of the factor levels for boxplot
+  data$aa_type_To_Simple <- factor(data$aa_type_To_Simple, levels = c(To_category, paste("not", To_category, sep = " ")))
+
+  # Create the boxplot
+  p <- ggplot(data, aes(x = aa_type_To_Simple, y = score)) + 
+    geom_boxplot(outlier.size = 0.3) + 
+    labs(title = df_name, x = "to amino acid category", y = "variant functional score") +
+    theme_minimal(base_size = 17)
+  
+  # Get unique categories for comparisons
+  categories <- levels(data$aa_type_To_Simple)  # Use levels to ensure the correct order
+  
+  # Initialize results dataframe
+  results <- data.frame(Category1 = character(), Category2 = character(), p.value = numeric(), estimate = numeric())
+  comparisons <- list()
+  
+  # Perform pairwise comparisons
+  for(i in 1:(length(categories) - 1)){
+    for(j in (i + 1):length(categories)){
+      category1 <- categories[i]
+      category2 <- categories[j]
+      
+      category1_data <- data %>% filter(aa_type_To_Simple == category1)
+      category2_data <- data %>% filter(aa_type_To_Simple == category2)
+      
+      test_result <- wilcox.test(category1_data$score, category2_data$score, 
+                                 mu = 0, alt = "two.sided", conf.int = TRUE, conf.level = 0.95, 
+                                 paired = FALSE, correct = TRUE)
+      
+      p_value <- test_result$p.value
+      estimate <- test_result$estimate
+      
+      results <- rbind(results, data.frame(Category1 = category1, Category2 = category2, p.value = p_value, estimate = estimate))
+      comparisons <- append(comparisons, list(c(category1, category2)))
+    }
+  }
+  
+  # Apply Bonferroni correction
+  results$p.value <- p.adjust(results$p.value, method = "bonferroni")
+  
+  # Print results
+  print(results)
+  
+  # Filter significant results
+  sig_results <- results[results$p.value < 0.05,]
+  
+  # Write significant results to CSV
+  write.csv(sig_results, file = csv_filename, row.names = FALSE)
+  
+  # Print medians of categories
+  cat("Medians of categories:\n")
+  for(category in categories) {
+    median_value <- median(data[data$aa_type_To_Simple == category,]$score, na.rm = TRUE)
+    cat("Category:", category, "Median:", median_value, "\n")
+  }
+  
+  # Add significance bars if there are significant results
+  if (nrow(sig_results) > 0) {
+    sig_comparisons <- comparisons[results$p.value < 0.05]
+    p <- p + stat_compare_means(comparisons = sig_comparisons, method = "wilcox.test", 
+                                label = "p.signif", p.adjust.method = "bonferroni")
+  }
+  
+  # Save plot
+  ggsave(p, device = "pdf", filename = pdf_filename, width = 3, height = 6)
+  print(p)
+}
+
+analyze_data_TO_simple(map_processed, "proline", "to_proline.pdf", "to_proline.csv")
+analyze_data_TO_simple(map_processed, "hydrophobic", "to_hydrophobic.pdf", "to_hydrophobic.csv")
+analyze_data_TO_simple(map_processed, "neg_charged", "to_neg_charged.pdf", "to_neg_charged.csv")
+analyze_data_TO_simple(map_processed, "pos_charged", "to_pos_charged.pdf", "to_pos_charged.csv")
+```
+```{r PLOT_from_categoryToOthers, fig.show="hold", out.width="50%", echo = FALSE}
+#This chunk generates Figure S8
+#calculate the median score and count for each category change
+median_scores <- map_processed %>%
+  group_by(aa_type_From, aa_type_To) %>%
+  summarise(
+    median_score = median(score, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(aa_type_From, aa_type_To)
+
+#save median results
+print(median_scores)
+write.csv(median_scores, "medianScoresFromTocategories.csv", row.names = FALSE)
+
+#get unique 'from' types
+from_types <- unique(map_processed$aa_type_From)
+
+#extract all positions that are initially one or the other to see where they are distributed in the protein
+positive_charge_pos <- sort(as.numeric(unique(map_processed[map_processed$aa_type_From=="pos_charged",]$pos)))
+negative_charge_pos <- sort(as.numeric(unique(map_processed[map_processed$aa_type_From=="neg_charged",]$pos)))
+hydrophobic_pos_all <- sort(as.numeric(unique(map_processed[map_processed$aa_type_From=="hydrophobic",]$pos)))
+polar_pos <- sort(as.numeric(unique(map_processed[map_processed$aa_type_From=="polar",]$pos)))
+proline_pos <- sort(as.numeric(unique(map_processed[map_processed$aa_type_From=="proline",]$pos)))
+
+#save to paint onto structure
+write.csv(positive_charge_pos, "positive_charge_positions.csv", row.names = FALSE)
+write.csv(negative_charge_pos, "negative_charge_positions.csv", row.names = FALSE)
+write.csv(hydrophobic_pos_all, "hydrophobic_positions.csv", row.names = FALSE)
+write.csv(polar_pos, "polar_positions.csv", row.names = FALSE)
+write.csv(proline_pos, "proline_positions.csv", row.names = FALSE)
+
+#make this into a correlation-matrix-type plot
+#reformat data to be compatible with plot
+correlation_matrix <- median_scores %>%
+  select(aa_type_From, aa_type_To, median_score) %>%
+  pivot_wider(
+    names_from = aa_type_To,
+    values_from = median_score
+  )
+print(correlation_matrix)
+
+#reorder types so "proline" comes last
+types <- setdiff(sort(unique(c(median_scores$aa_type_From, median_scores$aa_type_To))), "proline")
+types <- c("proline", types)
+
+#expand to full grid and pivot
+correlation_matrix_full <- expand.grid(
+  aa_type_From = types,
+  aa_type_To = types
+) %>%
+  left_join(median_scores, by = c("aa_type_From", "aa_type_To")) %>%
+  pivot_wider(names_from = aa_type_To, values_from = median_score)
+print(correlation_matrix_full)
+
+heatmap_data <- expand.grid(
+  aa_type_From = types,
+  aa_type_To = types
+) %>%
+  left_join(median_scores, by = c("aa_type_From", "aa_type_To")) %>%
+  mutate(
+    aa_type_From = factor(aa_type_From, levels = types),
+    aa_type_To = factor(aa_type_To, levels = types)
+  )
+
+#Plot heatmap
+p <- ggplot(heatmap_data, aes(x = aa_type_To, y = aa_type_From, fill = median_score)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(median_score, 2)), na.rm = TRUE, size = 3) +
+  scale_fill_gradient(low = "skyblue", high = "darkred", na.value = "grey90") +
+  coord_fixed() +  # force square tiles
+  labs(
+    x = "TO",
+    y = "From",
+    fill = "Median Score"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y.right = element_text()  # if using right-side y labels later
+  )
+
+print(p)
+ggsave("corrMatrix.pdf", p, device = "pdf", width = 5, height = 5)
+```
+
+
+```{r positional_function}
+#This chunk calculates amino acid positional map scores
+process_positional <- function(file_path) {
+  # Read the data
+  data_table <- fread(file_path)
+  #only include missense variants
+  data_table <- data_table[!(grepl("=", data_table$hgvs_pro)|grepl("Ter", data_table$hgvs_pro)),]
+  # Extract amino acid information
+  data_table[, from_aa := str_extract_all(hgvs_pro, "\\w+\\d+")]
+  data_table[, from_aa := str_extract(hgvs_pro, "\\d+")]
+  # Calculate positional mean scores
+  positional_mean_scores <- data_table[, .(score = sum(score, na.rm = TRUE) / .N), by = "from_aa"]
+  # Convert 'from_aa' to numeric
+  positional_mean_scores$from_aa <- as.numeric(positional_mean_scores$from_aa)
+  return(positional_mean_scores)
+}
+
+#find average score by position 
+map_positional <- process_positional("20231018_WholeMap.csv")
+write.csv(file = "map_positional.csv", map_positional, row.names = FALSE)
+```
+
+
+```{r choose_fasa_cutoffs, echo = FALSE}
+#This chunk generates Figure S6
+#process sasa scores
+sasa_scores_full <-read.table("AIRE_SASA_Output.txt")
+freesasa_data <- data.frame(sasa_scores_full$V3, sasa_scores_full$V6)
+names(freesasa_data)[names(freesasa_data) == "sasa_scores_full.V6"] <- "sasa"
+names(freesasa_data)[names(freesasa_data) == "sasa_scores_full.V3"] <- "from_aa"
+
+#annotated with buried or not
+freesasa_data$location <- case_when(
+  freesasa_data$sasa <= 50  ~ "buried",
+  freesasa_data$sasa >= 110 ~ "surface",
+  TRUE                      ~ NA
+)
+
+write.csv(file = "freeSASAannot.csv", freesasa_data, row.names = FALSE)
+
+p <- ggplot(freesasa_data, aes(x = sasa)) +
+  geom_histogram(binwidth = 1, fill = "grey", color = "black") +
+  geom_vline(xintercept = 50, color = "magenta", linetype = "dashed") +
+  geom_vline(xintercept = 110, color = "green", linetype = "dashed") +
+  labs(title = "freeSASA", x = "SASA (Å²)", y = "Frequency") +
+  theme_minimal(base_size = 15)
+
+print(p)
+
+#plot histogram and draw lines that define core or surface based on sasa score
+ggsave(p, filename = "allatoms_rel_freesasa.pdf", width = 8, height = 5, device = "pdf")
+```
+
+```{r plot_score_by_protein_position, fig.show="hold", out.width="50%", echo = FALSE}
+#This chunk analyzes surface and core positional scores, using freeSASA daa processed above. This chunk generates Figure 2A and Figure S10B.
+#filter by core and surface values
+filtered_sasa50 <- freesasa_data %>% 
+  filter(sasa < 50) %>%
+  mutate(from_aa = as.numeric(from_aa))
+
+filtered_sasa110 <- freesasa_data %>% 
+  filter(sasa > 110) %>%
+  mutate(from_aa = as.numeric(from_aa))
+
+#function to process SASA scores and generate significance files
+process_SASA_scores <- function(scores_data, freesasa_data) {
+  
+  #make core/buried amino acid category
+  core_scores <- merge(scores_data, filtered_sasa50, by = "from_aa") %>% 
+    select(from_aa, score)
+  write.csv(core_scores, paste0("AIRE_", "Core_freesasa.csv"), row.names = FALSE)
+  
+  #make exposed amino acid category
+  surface_scores <- merge(scores_data, filtered_sasa110, by = "from_aa") %>% 
+    select(from_aa, score)
+  write.csv(surface_scores, paste0("AIRE_", "Surface_freesasa.csv"), row.names = FALSE)
+  
+  #combine core and surface scores
+  combined_scores <- merge(core_scores, surface_scores, by = "from_aa", all = TRUE)
+  names(combined_scores) <- c("from_aa", "core", "surface")
+  
+  #write combined data to CSV
+  write.csv(combined_scores, "AIRE_combined_freesasa.csv", row.names = FALSE)
+  
+  #combinee data for plotting
+  combined_long <- combined_scores %>% 
+    pivot_longer(cols = c(core, surface), names_to = "Structure_Type", values_to = "score") %>% 
+    na.omit()  # Remove rows with NA values
+  
+  #print medians to console
+  cat("Medians:\n")
+  cat("Buried:", median(combined_scores$core, na.rm = TRUE), "\n")
+  cat("Surface:", median(combined_scores$surface, na.rm = TRUE), "\n")
+  #print table of number of core and surface
+  print(table(combined_long$Structure_Type))
+  
+  #create the boxplot
+  p <- ggplot(combined_long, aes(x = Structure_Type, y = score)) + 
+    geom_boxplot(outlier.shape = NA) + 
+    labs(x = "Amino Acid Location", y = "Functional Score") + 
+    theme_minimal(base_size = 15)
+  
+  #perform significance tests
+  sig_tests <- compare_means(score ~ Structure_Type, data = combined_long, 
+                             method = "wilcox.test", p.adjust.method = "bonferroni")
+  
+  #filter significant results
+  sig_tests <- sig_tests %>% filter(p.adj < 0.05)
+  
+  #save significant hits to a CSV file
+  if (nrow(sig_tests) > 0) {
+    write.csv(sig_tests, paste0(deparse(substitute(scores_data)), "_AIRE_positional_significant_hits.csv"), row.names = FALSE)
+  }
+  #create a list of significant comparisons
+  significant_comparisons <- lapply(1:nrow(sig_tests), function(i) {
+    c(sig_tests$group1[i], sig_tests$group2[i])
+  })
+  #add significance bars to the plot if there are significant comparisons
+  if (nrow(sig_tests) > 0) {
+    p <- p + stat_compare_means(comparisons = significant_comparisons, method = "wilcox.test", label = "p.signif")
+  }
+  print(p)
+  #save plot
+  ggsave(filename = paste(deparse(substitute(scores_data)), "AIRE_freesasa_boxplot.pdf", sep = "_"), height = 4, width = 3, device = "pdf")
+}
+
+#evaluate map for boxplot
+process_SASA_scores(map_positional, freesasa_data)
+
+#extract only CARD domain positions
+CARD_domain <- map_positional[map_positional$from_aa < 106,]
+# Evaluate only CARD domain for core and surface
+process_SASA_scores(CARD_domain, freesasa_data)
+
+#run these plots using only high-confidence AlphaFold prediction data 
+#input AlphaFold confidence scores
+alphafoldConf <- read.csv("AF_confidenceScores_AIRE.csv", header = FALSE)
+alphafoldConf_cleaned <- alphafoldConf[-c(1:7), , drop = FALSE]
+
+#split column into scores and header
+alphafoldConf_df <- read.table(text = alphafoldConf_cleaned$V1, 
+                               fill = TRUE, 
+                               header = FALSE, 
+                               col.names = c("label_asym_id", "label_comp_id", "label_seq_id", "metric_id", "metric_value", "model_id", "ordinal_id"))
+
+#extract the necessary columns
+alphafold_necc_info <- alphafoldConf_df[, c("label_comp_id", "label_seq_id", "metric_value")]
+colnames(alphafold_necc_info) <- c("AA", "from_aa", "AF_confidence")
+
+#merge confidence data with positional data
+map_positional_w_confidence <- merge(alphafold_necc_info, map_positional, by = "from_aa")
+high_confidence_map_positional <- map_positional_w_confidence[map_positional_w_confidence$AF_confidence > 70,]
+
+#process SASA scores for high-confidence positions
+process_SASA_scores(high_confidence_map_positional, freesasa_data)
+
+#check if big hydrophobic residues are buried according to freesasa
+big_hydrophobic <- map_processed[grepl("Phe|Tyr|Trp|Ile", map_processed$from),]
+#extract unique hydrophobic positions
+hydrophobic_pos <- unique(big_hydrophobic$pos)
+#calculate the proportion of buried hydrophobic positions
+buried_hydrophobic_ratio <- length(intersect(filtered_sasa50$from_aa, hydrophobic_pos)) / length(hydrophobic_pos)
+exposed_hydrophobic_ratio <- length(intersect(filtered_sasa110$from_aa, hydrophobic_pos)) / length(hydrophobic_pos)
+```
+
+```{r map_scores_by_domain}
+#This chunk compares scores by domain type, but does not generate figures for the mansucript
+#label by domain
+map_processed$pos <- as.numeric(map_processed$pos)
+map_processed <- map_processed %>%
+  mutate(Domain = case_when(
+    pos >= 1 & pos <= 105 ~ "CARD",
+    pos >= 101 & pos <= 178 ~ "Disordered",
+    pos >= 181 & pos <= 233 ~ "SAND not disordered",
+    pos >= 234 & pos <= 290 ~ "Disordered",
+    pos >= 296 & pos <= 343 ~ "PHD1",
+    pos >= 348 & pos <= 382 ~ "Disordered",
+    pos >= 434 & pos <= 475 ~ "PHD2",
+    pos >= 489 & pos <= 508 ~ "Disordered",
+    pos >= 515 & pos <= 545 ~ "C-term",
+    TRUE ~ "no known"
+  ))
+# Create the boxplot
+mapbyDomains <- ggplot(map_processed, aes(x = Domain, y = score)) + 
+  geom_boxplot() + 
+  theme_minimal(base_size = 15) + 
+  labs(x = "domain", y = "variant functional score")
+
+ggsave(filename = "AIRE_domains_boxplot.pdf", plot = mapbyDomains, height = 5, width = 7, device = "pdf")
+
+# Calculate medians for each domain
+medians <- map_processed %>%
+  group_by(Domain) %>%
+  summarise(median_score = median(score, na.rm = TRUE))
+
+# Print medians
+print(medians)
+
+# Perform the significance tests
+sig_tests <- compare_means(score ~ Domain, data = map_processed, 
+                           method = "wilcox.test", p.adjust.method = "bonferroni")
+
+# Filter significant results
+sig_tests <- sig_tests %>% filter(p.adj < 0.05)
+
+# Save the significant hits to a CSV file
+if (nrow(sig_tests) > 0) {
+  write.csv(sig_tests, "AIRE_domains_significant_hits.csv", row.names = FALSE)
+}
+
+# Create a list of significant comparisons
+significant_comparisons <- list()
+for (i in 1:nrow(sig_tests)) {
+  comparison <- c(sig_tests$group1[i], sig_tests$group2[i])
+  significant_comparisons <- c(significant_comparisons, list(comparison))
+}
+
+# Add significance bars to the plot if there are significant comparisons
+if (nrow(sig_tests) > 0) {
+  mapbyDomains <- mapbyDomains + 
+    stat_compare_means(comparisons = significant_comparisons, method = "wilcox.test", label = "p.signif", hide.ns = TRUE)
+}
+
+# Print the plot with significance bars
+print(mapbyDomains)
+ggsave(filename = "AIRE_domains_boxplotsig.pdf", plot = mapbyDomains, height = 7, width = 5, device = "pdf")
+```
+
+```{r generate_reference_set, echo = FALSE}
+#this chunk establishes reference set using clinvar reference set, no figures
+#read in clinvar reference set (only missense)
+clinvar <- read.csv("20250825_AIRE_missense_clinvar_result.csv")
+
+#remove conflicting variants
+clinvar <- clinvar[!grepl("Conflict", clinvar$Germline.classification),]
+table(clinvar$Germline.classification)
+
+#assign positive to pathogenic variants, negative to benign variants
+clinvar_hgvsp <- clinvar %>%
+  mutate(referenceSet = case_when(
+    grepl("athogenic", Germline.classification) ~ "Positive",
+    grepl("enign", clinvar$Germline.classification) ~ "Negative",
+    TRUE ~ "no known"
+  ))
+#change to hgvsp format
+clinvar_hgvsp$Protein.change <- mgsub(clinvar_hgvsp$Protein.change, pattern = c("A", "R", "N", "D", "C", "Q", "E", 
+                                      "G", "H", "I", "L", "K", "M", "F", "P",
+                                      "S", "T", "W", "Y", "V"), 
+                      replacement = c("Ala", "Arg", "Asn", "Asp", "Cys", "Gln",
+                                                "Glu", "Gly", "His", "Ile", "Leu", "Lys",
+                                                "Met", "Phe", "Pro", "Ser",
+                                                "Thr", "Trp", "Tyr", "Val"))
+colnames(clinvar_hgvsp)[colnames(clinvar_hgvsp) == "Protein.change"] ="hgvsp"
+clinvar_hgvsp$hgvsp <- paste("p.", clinvar_hgvsp$hgvsp, sep = "")
+#remove the non-provided classifications, and the VUS
+clinvar_hgvsp_onlyKnown <- clinvar_hgvsp[!grepl("not|significance", clinvar_hgvsp$Germline.classification),]
+#confirmed no duplicates
+duplicate_test <- clinvar_hgvsp_onlyKnown[duplicated(clinvar_hgvsp_onlyKnown$hgvsp),]
+
+#create a version with only multiple submitters mentioned
+clinvar_hgvsp_onlyKnown_multipleSubmitters <- clinvar_hgvsp_onlyKnown[grepl("multiple", clinvar_hgvsp_onlyKnown$Germline.review.status),]
+#create a version with only one star needed ("criteria provided")
+clinvar_hgvsp_onlyKnown_oneStar <- clinvar_hgvsp_onlyKnown[grepl("submitter", clinvar_hgvsp_onlyKnown$Germline.review.status),]
+
+#only keep necessary columns
+clinvar_hgvsp_onlyKnown <- clinvar_hgvsp_onlyKnown[,c("hgvsp","Germline.classification","referenceSet")]
+clinvar_hgvsp_onlyKnown_oneStar <- clinvar_hgvsp_onlyKnown_oneStar[,c("hgvsp","Germline.classification","referenceSet")]
+clinvar_hgvsp_onlyKnown_multipleSubmitters <- clinvar_hgvsp_onlyKnown_multipleSubmitters[,c("hgvsp","Germline.classification","referenceSet")]
+
+#save reference set
+write.csv(clinvar_hgvsp_onlyKnown, "20250825_clinvar_refset_all.csv", row.names = FALSE)
+write.csv(clinvar_hgvsp_onlyKnown_multipleSubmitters, "20250825_clinvar_refset_multipleSubmitters.csv", row.names = FALSE)
+write.csv(clinvar_hgvsp_onlyKnown_oneStar, "20250825_clinvar_refset_oneStar.csv", row.names = FALSE)
+
+```
+```{r extractingRevelScores, echo = FALSE}
+#This chunk extracts correct variant format to provide file to ensembl VEP to extract REVEL scores, no figures
+
+#AIRE_var_VEPformat <- paste(21, " ", REVELscoresAIRE$grch38_pos, " ", REVELscoresAIRE$grch38_pos, " ", REVELscoresAIRE$ref, "/", REVELscoresAIRE$alt, " ", 1, sep = "")
+#write.table(AIRE_var_VEPformat, "VEP_submitREvel.txt", row.names = FALSE, quote = FALSE)
+
+#input the output from the VEP, remove the # from the beginning of the file
+REVELread <- read.table("dxigbB5erc0diVQG.txt", header = TRUE)
+REVELreadAIRE <- REVELread[REVELread$Gene == "ENSG00000160224",]  
+REVELreadAIREmissense <- REVELread[grepl("missense_variant", REVELread$Consequence), ]
+uniqueREVELreadAIREmissense <- REVELreadAIREmissense[!duplicated(REVELreadAIREmissense$Uploaded_variation), ]
+
+#convert REVEL scores to useable scores
+uniqueREVELreadAIREmissense$hgvs_pro <- paste(substr(uniqueREVELreadAIREmissense$Amino_acids, start = 1, stop = 1), uniqueREVELreadAIREmissense$Protein_position, substr(uniqueREVELreadAIREmissense$Amino_acids, start = 3, stop = 3), sep = "")
+#Change variant notation to hgvs_pro
+uniqueREVELreadAIREmissense$hgvs_pro <- mgsub(uniqueREVELreadAIREmissense$hgvs_pro, pattern = c("A", "R", "N", "D", "C", "Q", "E", 
+                                                    "G", "H", "I", "L", "K", "M", "F", "P",
+                                                    "O", "S", "U", "T", "W", "Y", "V"), 
+                        replacement = c("Ala", "Arg", "Asn", "Asp", "Cys", "Gln",
+                                        "Glu", "Gly", "His", "Ile", "Leu", "Lys",
+                                        "Met", "Phe", "Pro", "Pyl", "Ser", "Sec",
+                                        "Thr", "Trp", "Tyr", "Val"))
+
+#Add p. to notation
+uniqueREVELreadAIREmissense$hgvs_pro <- paste0("p.", uniqueREVELreadAIREmissense$hgvs_pro)
+#extract columns needed
+REVEL_processed <- uniqueREVELreadAIREmissense[,c("hgvs_pro", "REVEL")]
+names(REVEL_processed)[names(REVEL_processed) == 'REVEL'] <- 'score'
+REVEL_test <- REVEL_processed[!duplicated(REVEL_processed$hgvs_pro),]
+write.csv(REVEL_test, "20260406_REVEL.csv", row.names =FALSE)
+``` 
+
+```{r process_compPredictors_andPRC_OnlyMapScoresMeasuredInBothReps, echo = FALSE} 
+#This chunk processes variant effect predictor scores, and outlines how the PRCs were generated using these reference sets. 
+
+#ESM1b: these are already *-1
+ESM <- read.csv("20240122_ESM1B_maveDB.csv")
+AM <- read.csv("20240122_AM_maveDB.csv")
+REVEL <- read.csv("20260406_REVEL.csv")
+SIFT <- read.csv("20240122_sift_maveDB.csv")
+VAR <- read.csv("20240122_varity_maveDB.csv")
+#use map scores only if they were measured in both replicates
+map <- read.csv("Rep_Intersection_merged_map.csv")
+
+#PRC code used for drawing plots is located here. script launched is located at bottom of this section. https://github.com/rothlab/docs/wiki/Drawing-PRC-curves
+
+#Important note: The 'map' that goes into the script needs to consider "damaging" variants the opposite direction as the predictors. The Roth lab maps consider damaging as negative, while varity, CPT, AlphaMissense consider damaging as positive. Of the predictors used, ESM1b scores consider damaging as negative, and were multiplied by -1 prior to consideration as a predictor (the input file has already been multiplied prior to this script). 
+
+#This script finds the number of negative and positive reference set variants for each reference set used since the PRC script outputs the initial reference set numbers. Calculate the correct intersection between the variants. The PRC script only uses the variants which have scores for all predictors and is found in the reference set, but prints the wrong number of refset variants on the output plot. This saves new reference sets that have the number of intersections.
+#find how many variants intersect between all computational predictors and map with and without PHD1 domain, and with and without REVEL
+
+refset <- clinvar_hgvsp_onlyKnown_oneStar
+
+  # add position column
+  regexp <- "[[:digit:]]+"
+  refset$pos <- as.numeric(str_extract(refset$hgvsp, regexp))
+
+  # for joins
+  refset_tocompare <- refset
+  colnames(refset_tocompare)[colnames(refset_tocompare) == "hgvsp"] <- "hgvs_pro"
+  refSet_noPHD1_tocompare <- refset_tocompare[!(refset_tocompare$pos >= 296 & refset_tocompare$pos <= 343), ]
+  
+  #save refsets for LLRp later
+  refset_LLRp <- refset_tocompare
+  colnames(refset_LLRp)[colnames(refset_LLRp) == "hgvs_pro"] <- "hgvsp"
+  refset_LLRp_noPHD1 <- refSet_noPHD1_tocompare
+  colnames(refset_LLRp_noPHD1)[colnames(refset_LLRp_noPHD1) == "hgvs_pro"] <- "hgvsp"
+  write.csv(refset_LLRp, "refset_for_LLRp.csv", row.names = FALSE)
+  write.csv(refset_LLRp_noPHD1, "refset_for_LLRp_noPHD1.csv", row.names = FALSE)
+  
+  # 1. map intersection
+  intersection_map_refSet <- map %>%
+    inner_join(refset_tocompare, by = "hgvs_pro")
+  
+  # 2. full intersection
+  intersection_refSet <- AM %>%
+    inner_join(REVEL, by = "hgvs_pro") %>%
+    inner_join(ESM, by = "hgvs_pro") %>%
+    inner_join(VAR, by = "hgvs_pro") %>%
+    inner_join(SIFT, by = "hgvs_pro") %>%
+    inner_join(map, by = "hgvs_pro") %>%
+    inner_join(refset_tocompare, by = "hgvs_pro")
+  
+  # 3. no PHD1
+ intersection_refSet_noPHD1 <- intersection_refSet[!(intersection_refSet$pos.x >= 296 & intersection_refSet$pos.x <= 343), ]
+  
+  # 4. no REVEL
+  intersection_refSet_noREVEL <- AM %>%
+    inner_join(ESM, by = "hgvs_pro") %>%
+    inner_join(VAR, by = "hgvs_pro") %>%
+    inner_join(SIFT, by = "hgvs_pro") %>%
+    inner_join(map, by = "hgvs_pro") %>%
+    inner_join(refset_tocompare, by = "hgvs_pro")
+  
+  # 5. no PHD1 + no REVEL
+  intersection_refSet_noPHD1_noREVEL <- AM %>%
+    inner_join(ESM, by = "hgvs_pro") %>%
+    inner_join(VAR, by = "hgvs_pro") %>%
+    inner_join(SIFT, by = "hgvs_pro") %>%
+    inner_join(map, by = "hgvs_pro") %>%
+    inner_join(refSet_noPHD1_tocompare, by = "hgvs_pro")
+  
+  # ---- Save outputs ----
+  # base filename
+  base <- paste0("20250826_", "clinvar_hgvsp_onlyKnown_oneStar")
+  
+  colnames(intersection_refSet)[colnames(intersection_refSet) == "hgvs_pro"] <- "hgvsp"
+  colnames(intersection_refSet_noPHD1)[colnames(intersection_refSet_noPHD1) == "hgvs_pro"] <- "hgvsp"
+  colnames(intersection_refSet_noREVEL)[colnames(intersection_refSet_noREVEL) == "hgvs_pro"] <- "hgvsp"
+  colnames(intersection_refSet_noPHD1_noREVEL)[colnames(intersection_refSet_noPHD1_noREVEL) == "hgvs_pro"] <- "hgvsp"
+    
+  write.csv(intersection_refSet[, c("hgvsp","referenceSet")],
+            paste0(base, "_intersection_full_measuredinBothMaps.csv"), row.names = FALSE)
+  write.csv(intersection_refSet_noPHD1[, c("hgvsp","referenceSet")],
+            paste0(base, "_intersection_noPHD1_measuredinBothMaps.csv"), row.names = FALSE)
+  write.csv(intersection_refSet_noREVEL[, c("hgvsp","referenceSet")],
+            paste0(base, "_intersection_noREVEL_measuredinBothMaps.csv"), row.names = FALSE)
+  write.csv(intersection_refSet_noPHD1_noREVEL[, c("hgvsp","referenceSet")],
+            paste0(base, "_intersection_noPHD1_noREVEL_measuredinBothMaps.csv"), row.names = FALSE)
+  
+    # Save also the counts (tables) with labels
+  sink(paste0(base, "_counts.txt"))
+  cat("Counts for ", "clinvar_hgvsp_onlyKnown_oneStar", "\n\n")
+  cat("1. Variants from reference set measured in map:\n")
+  print(table(intersection_map_refSet$referenceSet))
+  cat("\n")
+  cat("2. Full intersection (AM + REVEL + ESM + VAR + SIFT + map + refset):\n")
+  print(table(intersection_refSet$referenceSet))
+  cat("\n")
+  cat("3. Intersection with PHD1 variants excluded:\n")
+  print(table(intersection_refSet_noPHD1$referenceSet))
+  cat("\n")
+  cat("4. Intersection with REVEL excluded:\n")
+  print(table(intersection_refSet_noREVEL$referenceSet))
+  cat("\n")
+  cat("5. Intersection with both PHD1 and REVEL excluded:\n")
+  print(table(intersection_refSet_noPHD1_noREVEL$referenceSet))
+  cat("\n")
+  sink()
+
+# # ==============================
+# # PRC runs for clinvar_onlyKnown_oneStar
+# # ==============================
+# 
+# draw PRC with everything inclusive
+#tsm drawPRC Rep_Intersection_merged_map.csv 20250826_clinvar_hgvsp_onlyKnown_oneStar_intersection_full_measuredinBothMaps.csv \ --predictors #20240122_ESM1B_maveDB.csv,20240122_AM_maveDB.csv,20240122_varity_maveDB.csv,20240122_sift_maveDB.csv,20260406_REVEL.csv \ --predictorNames #ESM1b,AlphaMissense,VARITY,SIFT,REVEL
+# 
+# # draw PRC no PHD1 variants
+# tsm drawPRC Rep_Intersection_merged_map.csv 20250826_clinvar_hgvsp_onlyKnown_oneStar_intersection_noPHD1_measuredinBothMaps.csv \
+#   --predictors 20240122_ESM1B_maveDB.csv,20240122_AM_maveDB.csv,20240122_varity_maveDB.csv,20240122_sift_maveDB.csv,20260406_REVEL.csv \
+#   --predictorNames ESM1b,AlphaMissense,VARITY,SIFT,REVEL
+
+# # draw PRC with circular evidence strength removed for reviewer comment
+# tsm drawPRC Rep_Intersection_merged_map.csv 20260414_clinvar_hgvsp_onlyKnown_oneStar_intersection_full_measuredinBothMaps_noCircularity.csv \
+#   --predictors 20240122_ESM1B_maveDB.csv,20240122_AM_maveDB.csv,20240122_varity_maveDB.csv,20240122_sift_maveDB.csv,20260406_REVEL.csv \
+#   --predictorNames ESM1b,AlphaMissense,VARITY,SIFT,REVEL  
+```
+
+
+```{r LLRp_calculations_FIGURE_filterOn_OnlyMeasuredInBothMaps, echo = FALSE}
+#This chunk translates scores to evidence strengths of pathogenicity, but using calcLLR on terminal, instructions below to make Figure S15
+
+#https://github.com/rothlab/docs/wiki/Translating-scores-to-pathogenicity-LLRs
+#bandwidths were selected based on attempting with all options that generate a smoother line
+
+#remove outlier scores that are very negative in AIRE map for LLRp plot. The figure does not change as the ones outside this range would be undetermined, just the axis are more appropriate without these variants. They get reappended to the final table as scores.  
+map <- read.csv("Rep_Intersection_merged_map.csv")
+map_nolow <- map[map$score>=-1.5&map$score<=2.5,]
+write.csv(map_nolow, "20250906_WholeMap_noLow_Intersect_bothReps.csv", row.names = FALSE)
+
+#check intersection of map with refset to see how many are on below plots
+  #side note: find number of refset measured in map
+  map_aside <- map
+    colnames(map_aside)[colnames(map_aside) == "hgvs_pro"] <- "hgvsp"
+  intersection_map_refSet_unfiltered <- map_aside %>%
+    inner_join(refset_LLRp, by = "hgvsp")
+   intersection_map_refSet_filteredPHD1 <- map_aside %>%
+    inner_join(refset_LLRp_noPHD1, by = "hgvsp")
+   table(intersection_map_refSet_unfiltered$referenceSet)
+      table(intersection_map_refSet_filteredPHD1$referenceSet)
+   
+#run in terminal:
+# tsm calcLLR -i 10 20250906_WholeMap_noLow_Intersect_bothReps.csv refset_for_LLRp.csv --bandwidth nrd --outlierSuppression 0.1
+# tsm calcLLR -i 10 20250906_WholeMap_noLow_Intersect_bothReps.csv refset_for_LLRp_noPHD1.csv --bandwidth nrd --outlierSuppression 0.1
+# 
+# get thresholds - exclude PHD1 variants
+# tsm calcLLR --bandwidth nrd 20250906_WholeMap_noLow_Intersect_bothReps.csv refset_for_LLRp_noPHD1.csv --printTransitions --outlierSuppression 0.1
+# 
+# Resulting thresholds (exclude PHD1 variants):
+#-0.733 : none -> patho.support
+#-0.701 : patho.support -> patho.moderate
+#-0.599 : patho.moderate -> patho.strong
+#-0.110 : patho.strong -> patho.moderate
+#0.150 : patho.moderate -> patho.support
+#0.371 : patho.support -> none
+#0.667 : none -> benign.support
+#0.915 : benign.support -> benign.strong
+#1.565 : benign.strong -> benign.support
+#1.699 : benign.support -> none
+
+####Use the non-PHD1 variant transitions to assign evidence strengths to scores
+#load in variants with LLR map scores
+score_file <- read.csv("refset_for_LLRp_llr.csv", header = TRUE)
+
+score_file_w_lowandhigh <- bind_rows(
+  score_file,
+  anti_join(map, score_file, by = "hgvs_pro")
+)
+
+#convert all scores to evidence weights
+#assigning categories based on whether value is between the thresholds
+score_file_ew <- score_file_w_lowandhigh %>%
+  mutate(evidence_weight = case_when(
+    score <= -0.733 ~ "undetermined",
+    score > -0.733 & score <= -0.701 ~ "patho.support",
+    score > -0.701 & score <= -0.599 ~ "patho.moderate",
+    score > -0.599 & score <= -0.110 ~ "patho.strong",
+    score > -0.110 & score <= 0.150 ~ "patho.moderate",
+    score > 0.150 & score <= 0.371 ~ "patho.support",    
+    score > 0.371 & score <= 0.667 ~ "undetermined",
+    score > 0.667 & score <= 0.915 ~ "benign.support",
+    score > 0.915 & score <= 1.565 ~ "benign.strong",
+    score > 1.565 & score <= 1.699 ~ "benign.support",
+    score > 1.699 ~"undetermined"
+  ))
+
+#if the variants were out of range to get an LLR calculated, here they are made ND
+score_file_ew$llr[is.na(score_file_ew$llr)] <- NA
+score_file_ew$llrCI[is.na(score_file_ew$llrCI)] <- NA
+
+#How many missense variants were captured by the map
+score_file_missense <- score_file_ew[!(grepl("=", score_file_ew$hgvs_pro)|grepl("Ter", score_file_ew$hgvs_pro)),]
+nrow(score_file_missense)
+
+#Load in ClinVar reference set and pull out which is which (fetched Sept 2, 2025)
+refset <- read.table("202509_clinvar_result_all_missense.txt", header = TRUE, sep = "\t")
+
+#Change variant notation to hgvs_pro
+#Change colname
+names(refset)[names(refset) == 'Protein.change'] <- 'hgvs_pro'
+names(refset)[names(refset) == 'Germline.classification'] <- 'sig'
+#Change variant notation to hgvs_pro
+refset$hgvs_pro <- mgsub(refset$hgvs_pro, pattern = c("A", "R", "N", "D", "C", "Q", "E", 
+                                                                      "G", "H", "I", "L", "K", "M", "F", "P",
+                                                                      "S", "T", "W", "Y", "V"), 
+                                 replacement = c("Ala", "Arg", "Asn", "Asp", "Cys", "Gln",
+                                                 "Glu", "Gly", "His", "Ile", "Leu", "Lys",
+                                                 "Met", "Phe", "Pro", "Ser",
+                                                 "Thr", "Trp", "Tyr", "Val"))
+#add p. to notation
+refset$hgvs_pro <- paste0("p.", refset$hgvs_pro)
+
+#assigning categories based on what the classification is on ClinVar
+refset <- refset %>%
+  mutate(type = case_when(
+    grepl("enign", refset$sig) ~ "B/LB",
+    grepl("Conflicting", refset$sig) ~ "Conflicting",
+    grepl("Uncertain", refset$sig) ~ "VUS",
+    grepl("not provided", refset$sig) ~ "NA",
+    TRUE ~ "P/LP" #Had to do this to include path, because the conflicts say "pathogenicity" in them
+  ))
+
+#Keep only required columns from clinvar then merge with known scores to see how the classifications are falling into categories in the map
+refset <- refset[, c("hgvs_pro", "type")]
+#exclude anything with NA sig
+refset_simple <- subset(refset, type != "NA")
+
+#only include refset variants once
+refset_simple_test <- refset_simple[duplicated(refset_simple$hgvs_pro),]
+#there are duplicates, remove them. All duplicates have 2X VUS entries, except for Ala399Asp, which has one conflict and one VUS, which has been called conflict.keeping just one entry keeps it as a conflict
+refset_simple <- refset_simple[!duplicated(refset_simple$hgvs_pro),]
+
+#add scores and LLR evidence weights to the clinvar set
+names(refset_simple)[names(refset_simple) == 'hgvsp'] <- 'hgvs_pro'
+forsave_labelled_clinvarVariants <- merge(refset_simple, score_file_missense, by="hgvs_pro", all.x=TRUE)
+write.csv(forsave_labelled_clinvarVariants, "20250902_ClinVar_labelledLLRps_scores.csv")
+
+#Merge the refset with the LLR values, for all variants
+score_file_ew_types <- merge(score_file_ew, refset_simple, by = "hgvs_pro", all.x = TRUE)
+
+##Remove all variants of the PHD1 domain that were not given at least supporting path evidence strength
+#prepare regular expression
+regexp <- "[[:digit:]]+"
+#process position
+score_file_ew_types$pos <- str_extract(score_file_ew_types$hgvs_pro, regexp)
+score_file_ew_types$pos <- as.numeric(score_file_ew_types$pos)
+#assign PHD1 variant class
+score_file_ew_types$class <- ifelse(score_file_ew_types$pos >= 296 & score_file_ew_types$pos <= 343, "PHD1", "")
+#if the variants are synonymous, nonsense or are in the PHD1 domain and not patho, change them to undetermined
+score_file_ew_types <- score_file_ew_types %>%
+  mutate(
+    evidence_weight = case_when(
+      grepl("=", hgvs_pro) ~ NA,
+      grepl("Ter", hgvs_pro) ~ NA,
+      class == "PHD1" & !grepl("^patho", evidence_weight) ~ "undetermined",
+      TRUE ~ evidence_weight
+    ),
+    llr = case_when(
+      grepl("=", hgvs_pro) ~ NA,
+      grepl("Ter", hgvs_pro) ~ NA,
+      TRUE ~ llr 
+    ),
+    llrCI = case_when(
+      grepl("=", hgvs_pro) ~ NA,
+      grepl("Ter", hgvs_pro) ~ NA,
+      TRUE ~ llrCI
+    )
+  )
+
+#format the LLRCI to be readable for maveDB
+#remove square brackets
+score_file_ew_types$llrCI <- gsub("\\[|\\]", "", score_file_ew_types$llrCI)
+#separate into two columns
+score_file_ew_types <- score_file_ew_types %>%
+  separate(llrCI, into = c("llrCI_lower", "llrCI_upper"), sep = ";", convert = TRUE)
+#If lower is ND, make upper also ND.
+score_file_ew_types$llrCI_upper[is.na(score_file_ew_types$llrCI_lower)] <- NA
+
+#generate file to upload to maveDB. this is all scores, inlcuding nonsense/synonymous, and only the variants measured in both biological replicates
+#save final scores with evidence weights, setting PHD1 variants to undetermined. these do not have SNV label
+write.csv(score_file_ew_types, "20250913_finalScoreswEvidenceWeights_noSNVlabel.csv", row.names=FALSE)
+```
+
+```{r SNV-accessible_basedOnSeq, echo=FALSE}
+#this script makes a column in the dataset that says whether your sequence is snv-accessible based on the actual AIRE coding sequence (non-codon optimized)
+#this script also makes the file required for maveDB score upload, with all necessary columns
+
+### --- 1. Prepare coding sequence and codons --- ###
+cDS <- "ATGGCGACGGACGCGGCGCTACGCCGGCTTCTGAGGCTGCACCGCACGGAGATCGCGGTGGCCGTGGACAGCGCCTTCCCACTGCTGCACGCGCTGGCTGACCACGACGTGGTCCCCGAGGACAAGTTTCAGGAGACGCTTCATCTGAAGGAAAAGGAGGGCTGCCCCCAGGCCTTCCACGCCCTCCTGTCCTGGCTGCTGACCCAGGACTCCACAGCCATCCTGGACTTCTGGAGGGTGCTGTTCAAGGACTACAACCTGGAGCGCTATGGCCGGCTGCAGCCCATCCTGGACAGCTTCCCCAAAGATGTGGACCTCAGCCAGCCCCGGAAGGGGAGGAAGCCCCCGGCCGTCCCCAAGGCTTTGGTACCGCCACCCAGACTCCCCACCAAGAGGAAGGCCTCAGAAGAGGCTCGAGCTGCCGCGCCAGCAGCCCTGACTCCAAGGGGCACCGCCAGCCCAGGCTCTCAACTGAAGGCCAAGCCCCCCAAGAAGCCGGAGAGCAGCGCAGAGCAGCAGCGCCTTCCACTCGGGAACGGGATTCAGACCATGTCAGCTTCAGTCCAGAGAGCTGTGGCCATGTCCTCCGGGGACGTCCCGGGAGCCCGAGGGGCCGTGGAGGGGATCCTCATCCAGCAGGTGTTTGAGTCAGGCGGCTCCAAGAAGTGCATCCAGGTTGGCGGGGAGTTCTACACTCCCAGCAAGTTCGAAGACTCCGGCAGTGGGAAGAACAAGGCCCGCAGCAGCAGTGGCCCGAAGCCTCTGGTTCGAGCCAAGGGAGCCCAGGGCGCTGCCCCCGGTGGAGGTGAGGCTAGGCTGGGCCAGCAGGGCAGCGTTCCCGCCCCTCTGGCCCTCCCCAGTGACCCCCAGCTCCACCAGAAGAATGAGGACGAGTGTGCCGTGTGTCGGGACGGCGGGGAGCTCATCTGCTGTGACGGCTGCCCTCGGGCCTTCCACCTGGCCTGCCTGTCCCCTCCGCTCCGGGAGATCCCCAGTGGGACCTGGAGGTGCTCCAGCTGCCTGCAGGCAACAGTCCAGGAGGTGCAGCCCCGGGCAGAGGAGCCCCGGCCCCAGGAGCCACCCGTGGAGACCCCGCTCCCCCCGGGGCTTAGGTCGGCGGGAGAGGAGGTAAGAGGTCCACCTGGGGAACCCCTAGCCGGCATGGACACGACTCTTGTCTACAAGCACCTGCCGGCTCCGCCTTCTGCAGCCCCGCTGCCAGGGCTGGACTCCTCGGCCCTGCACCCCCTACTGTGTGTGGGTCCTGAGGGTCAGCAGAACCTGGCTCCTGGTGCGCGTTGCGGGGTGTGCGGAGATGGTACGGACGTGCTGCGGTGTACTCACTGCGCCGCTGCCTTCCACTGGCGCTGCCACTTCCCAGCCGGCACCTCCCGGCCCGGGACGGGCCTGCGCTGCAGATCCTGCTCAGGAGACGTGACCCCAGCCCCTGTGGAGGGGGTGCTGGCCCCCAGCCCCGCCCGCCTGGCCCCTGGGCCTGCCAAGGATGACACTGCCAGTCACGAGCCCGCTCTGCACAGGGATGACCTGGAGTCCCTTCTGAGCGAGCACACCTTCGATGGCATCCTGCAGTGGGCCATCCAGAGCATGGCCCGTCCGGCGGCCCCCTTCCCCTCCTGA"
+
+codons <- substring(cDS, seq(1,nchar(cDS)-2,3), seq(3,nchar(cDS),3))
+pos <- seq_along(codons)
+SNV_table <- data.frame(pos, codons, stringsAsFactors = FALSE)
+
+# Remove stop codon at end
+stop_codons <- c("TAA","TAG","TGA")
+if(tail(SNV_table$codons,1) %in% stop_codons) SNV_table <- SNV_table[-nrow(SNV_table), ]
+
+# Translation tables
+codon_table <- c(
+  "TTT"="F","TTC"="F","TTA"="L","TTG"="L","TCT"="S","TCC"="S","TCA"="S","TCG"="S",
+  "TAT"="Y","TAC"="Y","TAA"="*","TAG"="*","TGT"="C","TGC"="C","TGA"="*","TGG"="W",
+  "CTT"="L","CTC"="L","CTA"="L","CTG"="L","CCT"="P","CCC"="P","CCA"="P","CCG"="P",
+  "CAT"="H","CAC"="H","CAA"="Q","CAG"="Q","CGT"="R","CGC"="R","CGA"="R","CGG"="R",
+  "ATT"="I","ATC"="I","ATA"="I","ATG"="M","ACT"="T","ACC"="T","ACA"="T","ACG"="T",
+  "AAT"="N","AAC"="N","AAA"="K","AAG"="K","AGT"="S","AGC"="S","AGA"="R","AGG"="R",
+  "GTT"="V","GTC"="V","GTA"="V","GTG"="V","GCT"="A","GCC"="A","GCA"="A","GCG"="A",
+  "GAT"="D","GAC"="D","GAA"="E","GAG"="E","GGT"="G","GGC"="G","GGA"="G","GGG"="G"
+)
+aa_1to3 <- c(A="Ala", R="Arg", N="Asn", D="Asp", C="Cys", Q="Gln", E="Glu", G="Gly",
+             H="His", I="Ile", L="Leu", K="Lys", M="Met", F="Phe", P="Pro", S="Ser",
+             T="Thr", W="Trp", Y="Tyr", V="Val")
+SNV_table$aa <- codon_table[SNV_table$codons]
+
+### --- 2. Generate all SNVs --- ###
+get_possible_snvs <- function(codon) {
+  bases <- c("A","C","G","T")
+  snvs <- character()
+  for(i in 1:3) for(b in bases[bases != substr(codon,i,i)]) {
+    new_codon <- codon; substr(new_codon,i,i) <- b; snvs <- c(snvs,new_codon)
+  }
+  unique(snvs)
+}
+
+SNV_table$possible_SNVs <- lapply(SNV_table$codons,get_possible_snvs)
+SNV_table$possible_AAs <- lapply(SNV_table$possible_SNVs,function(cds) codon_table[cds])
+SNV_table$all_SNV_accessible_AA <- lapply(SNV_table$possible_AAs,function(x) unique(x))
+
+SNV_table$possible_SNVs <- sapply(SNV_table$possible_SNVs,paste,collapse=", ")
+SNV_table$possible_AAs <- sapply(SNV_table$possible_AAs,paste,collapse=", ")
+SNV_table$all_SNV_accessible_AA <- sapply(SNV_table$all_SNV_accessible_AA,paste,collapse=", ")
+
+### --- 3. Build HGVS for missense, synonymous, nonsense --- ###
+# Missense
+SNV_table$missense <- mapply(function(all_aa, orig) {
+  aas <- unlist(strsplit(all_aa,",\\s*")); aas <- aas[aas!=orig & aas!="*"]; paste(aas, collapse=", ")
+}, SNV_table$all_SNV_accessible_AA, SNV_table$aa)
+
+# Correct missense HGVS with full three-letter codes
+SNV_table$missense_hgvs <- mapply(function(orig,pos,miss) {
+  if(miss=="") return(NA)
+  aas <- unlist(strsplit(miss,",\\s*"))
+  paste0("p.", aa_1to3[orig], pos, aa_1to3[aas], collapse=", ")
+}, SNV_table$aa, SNV_table$pos, SNV_table$missense)
+
+# Synonymous
+SNV_table$synonymous_hgvs <- mapply(function(orig,pos,all_aa) {
+  aas <- unlist(strsplit(all_aa,",\\s*"))
+  if(orig %in% aas) paste0("p.",aa_1to3[orig],pos,"=") else NA
+}, SNV_table$aa, SNV_table$pos, SNV_table$all_SNV_accessible_AA)
+
+# Nonsense
+SNV_table$nonsense_hgvs <- sapply(seq_len(nrow(SNV_table)), function(i) {
+  aas <- unlist(strsplit(SNV_table$all_SNV_accessible_AA[i], ",\\s*"))
+  aas <- trimws(aas)
+  if("*" %in% aas) {
+    paste0("p.", aa_1to3[SNV_table$aa[i]], SNV_table$pos[i], "Ter")
+  } else {
+    NA
+  }
+})
+
+### --- 4. Combine all into one table --- ###
+make_variant_df <- function(hgvs_col,type_label){
+  variant_lists <- strsplit(hgvs_col,",\\s*")
+  variant_lists <- lapply(variant_lists,function(x)x[x!="" & !is.na(x)])
+  do.call(rbind,lapply(seq_along(variant_lists), function(i){
+    if(length(variant_lists[[i]])==0) return(NULL)
+    data.frame(pos=SNV_table$pos[i], orig_aa=SNV_table$aa[i],
+               variant=variant_lists[[i]], type=type_label, stringsAsFactors=FALSE)
+  }))
+}
+
+missense_df <- make_variant_df(SNV_table$missense_hgvs,"missense")
+syn_df <- make_variant_df(SNV_table$synonymous_hgvs,"synonymous")
+nonsense_df <- make_variant_df((SNV_table$nonsense_hgvs), "nonsense")
+
+
+all_SNV_df <- rbind(missense_df,syn_df,nonsense_df)
+write.csv(all_SNV_df,"all_SNV_variants_unified.csv",row.names=FALSE)
+
+### --- 5. Mark SNV-accessible variants in scores --- ###
+#first attach the variants seen in just one biological replicate
+oneReponly <- read.csv("uncommonReps.csv")
+score_file_ew_types <- bind_rows(
+  oneReponly  %>% mutate(numberofBioReps = 1),
+  score_file_ew_types %>% mutate(numberofBioReps = 2)
+)
+score_file_ew_types$SNVaccessible <- ifelse(
+  score_file_ew_types$hgvs_pro %in% all_SNV_df$variant, "yes","no"
+)
+score_file_ew_types <- score_file_ew_types[order(score_file_ew_types$pos), ]
+#mark as ND if they have only one bio rep
+score_file_ew_types <- score_file_ew_types %>%
+  mutate(
+    llr = ifelse(numberofBioReps == 1, NA, llr),
+    llrCI_lower = ifelse(numberofBioReps == 1, NA, llrCI_lower),
+    llrCI_upper = ifelse(numberofBioReps == 1, NA, llrCI_upper),
+    evidence_weight = ifelse(numberofBioReps == 1, NA, evidence_weight)
+  )
+
+#############THE BELOW IS THE FINAL FILE FOR THE MAVEDB UPLOAD!########################
+#format this so that the "class" changes to PHD1variant, yes and no. clean up
+score_file_ew_types_maveDB <- score_file_ew_types %>%
+  mutate(PHD1variant = ifelse(!is.na(class) & class == "PHD1", "yes", "no")) %>%
+  select(-class)
+score_file_ew_types_maveDB <- score_file_ew_types_maveDB %>%
+ mutate(
+    llrCI_lower = ifelse(llrCI_lower == "0.000", "0", llrCI_lower),
+    llrCI_upper = ifelse(llrCI_upper == "0.000", "0", llrCI_upper)
+  )
+#submission does not like mixed characters and numeric types
+score_file_ew_types_maveDB$llr <- as.character(score_file_ew_types_maveDB$llr)
+score_file_ew_types_maveDB$llrCI_lower <- as.character(score_file_ew_types_maveDB$llrCI_lower)
+score_file_ew_types_maveDB$llrCI_upper <- as.character(score_file_ew_types_maveDB$llrCI_upper)
+
+#incorporate classification information into dataset 
+classifications <- read.csv("ClinVar_reclassifications_EiBr_041125.csv", header = TRUE)
+classifications$hgvs_pro <- sub(",.*", "", classifications$hgvs_pro.score.se.df.llr.llrCI_lower.llrCI_upper.evidence_weight.ClinVarType.pos.class.SNVaccessible)
+#remove the long column, only include necessary info
+classifications_toMerge <- classifications[,-c(1:9)]
+#replace all dashes with NA
+classifications_toMerge[classifications_toMerge == "-"] <- NA
+#append classifications to MaveDB upload
+score_file_ew_types_maveDB_final <- merge(score_file_ew_types_maveDB, classifications_toMerge, by = "hgvs_pro", all = TRUE)
+#replace generic "Conflicting" entries with more detailed ClinVar class values
+score_file_ew_types_maveDB_final$type <- ifelse(
+  score_file_ew_types_maveDB_final$type == "Conflicting" & 
+    !is.na(score_file_ew_types_maveDB_final$ClinVar.Class),
+  score_file_ew_types_maveDB_final$ClinVar.Class,
+  score_file_ew_types_maveDB_final$type
+)
+#add more info to the ones that are missing conflicting details
+score_file_ew_types_maveDB_final$type[score_file_ew_types_maveDB_final$hgvs_pro == "p.Gly306Arg"] <- "Conflicting: VUS, LP"
+score_file_ew_types_maveDB_final$type[score_file_ew_types_maveDB_final$hgvs_pro == "p.Val301Met"] <- "Conflicting: VUS, LB"
+
+#Remove the extra VUS that have been added to ClinVar since the reference set was downloaded. 
+score_file_ew_types_maveDB_final <- score_file_ew_types_maveDB_final[!grepl("Thr391Asn|Leu428Val", score_file_ew_types_maveDB_final$hgvs_pro),]
+colnames(score_file_ew_types_maveDB_final)[colnames(score_file_ew_types_maveDB_final) == "type"] <- "ClinVarClass"
+colnames(score_file_ew_types_maveDB_final)[colnames(score_file_ew_types_maveDB_final) == "Reclass."] <- "Reclass"
+colnames(score_file_ew_types_maveDB_final)[colnames(score_file_ew_types_maveDB_final) == "Final.class"] <- "FinalClass"
+colnames(score_file_ew_types_maveDB_final)[colnames(score_file_ew_types_maveDB_final) == "Reclass.due.to.functional.map."] <- "ReclassDueToFunctionalMap"
+
+#how many variants in the APS-1 patient cohort are not in the ClinVar set? Add this flag. Also add the evidence manually for these. 
+clinvar_forcohortcompare <- read.csv("20250825_AIRE_missense_clinvar_result.csv")
+#change to hgvsp format
+clinvar_forcohortcompare$Protein.change <- mgsub(clinvar_forcohortcompare$Protein.change, pattern = c("A", "R", "N", "D", "C", "Q", "E", 
+                                      "G", "H", "I", "L", "K", "M", "F", "P",
+                                      "S", "T", "W", "Y", "V"), 
+                      replacement = c("Ala", "Arg", "Asn", "Asp", "Cys", "Gln",
+                                                "Glu", "Gly", "His", "Ile", "Leu", "Lys",
+                                                "Met", "Phe", "Pro", "Ser",
+                                                "Thr", "Trp", "Tyr", "Val"))
+colnames(clinvar_forcohortcompare)[colnames(clinvar_forcohortcompare) == "Protein.change"] ="hgvs_pro"
+clinvar_forcohortcompare$hgvs_pro <- paste("p.", clinvar_forcohortcompare$hgvs_pro, sep = "")
+#patients
+patients_forclinvarcompare <- read.csv("genphen_readable.csv")
+ # Remove all brackets from dataset
+  patients_forclinvarcompare <- data.frame(apply(patients_forclinvarcompare, 2, function(x) gsub("[(&)]", "", x)))
+  allele_vector <- c(patients_forclinvarcompare$allele.1.protein, patients_forclinvarcompare$allele.2.protein)
+#find variants not in clinvar from patient set
+unique_patient_variants <- setdiff(unique(allele_vector), clinvar_forcohortcompare$hgvs_pro)
+unique_patient_variants
+
+####section to add in the manually novel variants into the dataframe. 
+patientVarannotated <- read.csv("Manual_addPatientVar.csv")
+#make the llr a numeric vale
+score_file_ew_types_maveDB_final$llr <- as.numeric(score_file_ew_types_maveDB_final$llr)
+score_file_ew_types_maveDB_final$llrCI_lower <- as.numeric(score_file_ew_types_maveDB_final$llrCI_lower)
+score_file_ew_types_maveDB_final$llrCI_upper <- as.numeric(score_file_ew_types_maveDB_final$llrCI_upper)
+
+# Add the missing "ClinVar.Class" column to patientVarannotated, filling with NA
+patientVarannotated <- patientVarannotated %>%
+  mutate(ClinVar.Class = NA)
+
+# Combine the data frames, giving precedence to patientVarannotated for matching hgvs_pro
+# Step 1: Deduplicate patient variants first by hgvs_pro
+patientVarannotated_unique <- patientVarannotated %>%
+  group_by(hgvs_pro) %>%
+  slice(1) %>%  # keep the first row if there are multiple
+  ungroup()
+
+# Step 2: Exclude any patient variants from the original score file
+non_patient_variants <- score_file_ew_types_maveDB_final %>%
+  filter(!hgvs_pro %in% patientVarannotated_unique$hgvs_pro)
+
+# Step 3: Combine
+combined_df <- bind_rows(non_patient_variants, patientVarannotated_unique)
+
+# Step 4: Ensure column order matches
+combined_df <- combined_df %>% select(all_of(colnames(score_file_ew_types_maveDB_final)))
+
+# Step 5: Optional check for duplicates
+any(duplicated(combined_df$hgvs_pro))  # should return FALSE
+
+# Optional: Ensure column order matches the original score_file_ew_types_maveDB_final
+score_file_ew_types_maveDB_final <- combined_df %>%
+  select(all_of(colnames(score_file_ew_types_maveDB_final)))
+
+# Add "CAUTION" flags for variants whose CI overlaps the midpoint of undetermined (uncertain variants)
+df <- combined_df
+# only include rows where evidence weight is non-undetermined
+valid <- !df$evidence_weight %in% c(NA, "undetermined")
+# Compute CI bounds
+ci_low  <- df$score - df$se
+ci_high <- df$score + df$se
+# Overlaps midpoint? (TRUE if CI contains the midpoint)
+overlaps_ci <- function(ref) ci_low < ref & ci_high > ref
+# Apply flags only to valid rows, midpoint of the thing
+df$evidenceWeightConfidence <- ifelse(valid & overlaps_ci(0.5), "CAUTION", NA)
+# Save back
+score_file_ew_types_maveDB_final <- df
+table(score_file_ew_types_maveDB_final$evidenceWeightConfidence)
+
+#sort by pos
+score_file_ew_types_maveDB_final <- score_file_ew_types_maveDB_final[order(score_file_ew_types_maveDB_final$pos), ]
+#remove less detailed ClinVar annotation (conflicts were not as detailed before)
+score_file_ew_types_maveDB_final <- score_file_ew_types_maveDB_final[, -which(names(score_file_ew_types_maveDB_final) == "ClinVar.Class")]
+any(duplicated(score_file_ew_types_maveDB_final$hgvs_pro))
+#save for maveDB upload (this file is not to be used to be uploaded, save separately to be used in this script, because the quotes contradict with upload, but then mess up the rest)
+readr::write_csv(
+  score_file_ew_types_maveDB_final,
+  "20251110_finalScoreswEvidenceWeights_test.csv",
+  quote = "needed"
+)
+
+#summarize the ones with the caution flag
+caution_only <- score_file_ew_types_maveDB[score_file_ew_types_maveDB$flag1=="CAUTION",]
+table(caution_only$evidence_weight)
+sum(table(caution_only$evidence_weight))
+
+```
+
+```{r identify_significantly_upreg_var, echo = FALSE}
+##this chunk extracts hyper-active variants and identifies significant ones
+#identify the synonymous variant vector
+synonymous <- which(grepl("=", scores$hgvs_pro))
+syn.mean <- mean(scores$score[synonymous], na.rm = TRUE)
+#previous variant of less-stringent synonymous variant vector - this lets in more variants. not used for paper
+#syn.err <- sd(scores$score[synonymous], na.rm = TRUE)/sqrt(length(synonymous))
+syn.err <- sd(scores$score[synonymous], na.rm = TRUE)
+
+#manual significance test for candidate gain of function variants, taking error into account
+welch.test <- function(mean1,err1,mean2,err2,n1,n2) {
+  t <- (mean1-mean2)/sqrt(err1^2 + err2^2)
+  p <- pt(t,n1+n2-1,lower.tail=TRUE)
+  return(p)
+}
+
+#extract p vals from variants
+p.vals <- mapply(welch.test, syn.mean, syn.err, scores$score, scores$se, length(synonymous), 4)
+#multiple testing correction
+p.adj <- p.adjust(p.vals,length(scores$score),method="fdr")
+hyper.idx <- which(p.adj < 0.05)
+sig_scores <- scores[which(rownames(scores) %in% hyper.idx), ]
+colnames(sig_scores)[colnames(sig_scores) == "AA_change"] <- "hgvs_pro"
+write.csv(file = "sig_hyper.csv", sig_scores, row.names = FALSE)
+```
+
+```{r evidenceWeightforFigurelaterand_otherQs, echo = FALSE}
+#This chunk generates a dataframe required to make the plot of evidence weight summaries, and answers in-text questions for the paper
+#how many SNV variants have evidence that is not undetermined? 
+score_file_ew_types_no_undetermined_SNVonly <- score_file_ew_types[!score_file_ew_types$evidence_weight == "undetermined",]
+score_file_ew_types_no_undetermined_SNVonly <- score_file_ew_types_no_undetermined_SNVonly[score_file_ew_types_no_undetermined_SNVonly$SNVaccessible == "yes",]
+#how many variants are SNV accessible and have evidence other than undetermined, and no PHD1 domain?
+score_file_ew_types_no_undetermined_SNVonly_noPHD1 <- score_file_ew_types_no_undetermined_SNVonly[!score_file_ew_types_no_undetermined_SNVonly$class == "PHD1",]
+#how many of the SNVs not in PHD1 are VUS with evidence? 
+score_file_ew_types_no_undetermined_SNVonly_noPHD1_VUSonly <- na.omit(score_file_ew_types_no_undetermined_SNVonly_noPHD1[score_file_ew_types_no_undetermined_SNVonly_noPHD1$type == "VUS",])
+#proportion of total VUS captured no PHD1 domain
+nrow(score_file_ew_types_no_undetermined_SNVonly_noPHD1_VUSonly)
+table(score_file_ew_types_no_undetermined_SNVonly_noPHD1_VUSonly$evidence_weight)
+print(nrow(score_file_ew_types_no_undetermined_SNVonly_noPHD1_VUSonly)/314)
+#how many variants are SNV accessible and they are patho evidence? not just VUS
+score_file_ew_types_no_undetermined_SNVonly_patho <- score_file_ew_types_no_undetermined_SNVonly[
+  grepl("patho", score_file_ew_types_no_undetermined_SNVonly$evidence_weight), 
+]
+#how many PHD1 domain variants have evidence towards patho?
+score_file_ew_types_no_undetermined_SNVonly_patho_PHD1only <- score_file_ew_types_no_undetermined_SNVonly_patho[score_file_ew_types_no_undetermined_SNVonly_patho$class == "PHD1",]
+nrow(score_file_ew_types_no_undetermined_SNVonly_patho_PHD1only)
+#how many VUS have evidence strength with and without the PHD1 domain?
+score_file_ew_types_no_undetermined_SNVonly_VUSonly <- na.omit(score_file_ew_types_no_undetermined_SNVonly[score_file_ew_types_no_undetermined_SNVonly$type == "VUS",])
+#include only evidence towards pathogenicity
+score_file_ew_types_no_undetermined_SNVonly_towardPatho <- score_file_ew_types_no_undetermined_SNVonly_VUSonly[
+  grepl("patho", score_file_ew_types_no_undetermined_SNVonly_VUSonly$evidence_weight), 
+]
+#VUS number with evidence strength with PHD1 domain
+print(nrow(score_file_ew_types_no_undetermined_SNVonly_towardPatho))
+#table for how many VUS with evidence with no PHD1 domain
+table(score_file_ew_types_no_undetermined_SNVonly_towardPatho$class)
+
+##Eliminate ALL PHD1 variants not considering the evidence to draw alluvial plot #1
+score_file_ew_types_no_PHD1 <- score_file_ew_types[!score_file_ew_types$class == "PHD1",]
+```
+
+```{r plot_stackedbargraph, echo = FALSE}
+#This chunk makes the stacked barplot for Figure 3B
+##plot #2 is include anything in the PHD1 domain given at least supporting path evidence
+#identify vector of hgvs_pros that are PHD1 and have patho evidence strength
+PHD1_variants_KEEP <- score_file_ew_types[score_file_ew_types$class == "PHD1" & grepl("path", score_file_ew_types$evidence_weight),]
+#what proportion of PHD1 variants were given patho supporting evidence or worse?
+PHD1_only <- score_file_ew_types[score_file_ew_types$class == "PHD1",]
+nrow(PHD1_variants_KEEP)/nrow(PHD1_only)
+#remove PHD1 variants that are not in the KEEP list
+PHD1_variants_REMOVE <- score_file_ew_types[score_file_ew_types$class == "PHD1" & !(grepl("path", score_file_ew_types$evidence_weight)),]
+PHD1_variants_REMOVE_hgvspro <- PHD1_variants_REMOVE$hgvs_pro
+#generate final file with PHD1 variants only included if they are given damaging evidence strengths
+final_variants_with_evidenceWeights <- score_file_ew_types[!score_file_ew_types$hgvs_pro %in% PHD1_variants_REMOVE_hgvspro,]
+#how many variants given evidence weights including undetermined
+nrow(final_variants_with_evidenceWeights)
+#proportion of these variants that are SNV-accessible
+table(final_variants_with_evidenceWeights$SNVaccessible)[2]
+table(final_variants_with_evidenceWeights$SNVaccessible)[2]/(table(final_variants_with_evidenceWeights$SNVaccessible)[2]+table(final_variants_with_evidenceWeights$SNVaccessible)[1])
+
+###How many VUS were given evidence strengths? 
+#remove all PHD1 in general
+score_file_ew_types_no_PHD1_VUS <- score_file_ew_types_no_PHD1[grepl("VUS",score_file_ew_types_no_PHD1$type),]
+table_VUSbreakdown_noPHD1 <- table(score_file_ew_types_no_PHD1_VUS$evidence_weight)
+write.csv(table_VUSbreakdown_noPHD1, "table_VUS_Breakdown_evidence_elimallPHD1.csv", row.names = FALSE)
+
+#inclusive of PHD1 path evidence
+final_variants_with_evidenceWeights_VUS <- final_variants_with_evidenceWeights[grepl("VUS",final_variants_with_evidenceWeights$type),]
+table_VUSbreakdown <- table(final_variants_with_evidenceWeights_VUS$evidence_weight)
+write.csv(table_VUSbreakdown, "table_VUS_Breakdown_evidence_includePHD1pathevidence.csv", row.names = FALSE)
+
+# Color-blind friendly color palette from RColorBrewer
+color_palette <- brewer.pal(7, "Paired")
+
+###Plot stacked bargraph to illustrate variant evidence strength types (including all PHD1 with path evidence)
+#####process files for all variants, but remove anyone with only one bio rep 
+score_file_ew_types_all_forstackedbarplot <- score_file_ew_types[score_file_ew_types$numberofBioReps==2, ]
+score_file_ew_types_no_PHD1_all_forstackedbarplot <- 
+final_variants_with_evidenceWeights[final_variants_with_evidenceWeights$numberofBioReps==2, ]
+score_file_ew_types_all_forstackedbarplot <- score_file_ew_types_all_forstackedbarplot[!is.na(score_file_ew_types_all_forstackedbarplot$evidence_weight),]
+score_file_ew_types_no_PHD1_all_forstackedbarplot <- score_file_ew_types_no_PHD1_all_forstackedbarplot[!is.na(score_file_ew_types_no_PHD1_all_forstackedbarplot$evidence_weight),]
+#convert evidence_weight to a factor to keep order
+score_file_ew_types_all_forstackedbarplot$evidence_weight <- factor(
+  score_file_ew_types_all_forstackedbarplot$evidence_weight,
+  levels = c("benign.strong", "benign.support", "undetermined", "patho.support", "patho.moderate", "patho.strong", "patho.vstrong"))
+score_file_ew_types_no_PHD1_all_forstackedbarplot$evidence_weight <- factor(
+  score_file_ew_types_no_PHD1_all_forstackedbarplot$evidence_weight,
+  levels = c("benign.strong", "benign.support", "undetermined", "patho.support", "patho.moderate", "patho.strong", "patho.vstrong"))
+
+
+ #assign colours to evidence weights
+color_palette <- c(
+  "benign.support" = "#b5dda6",  
+  "benign.strong" = "#75a85b",  
+  "patho.support" = "#c8acfc",     
+  "patho.moderate" = "#8d75d8",
+  "patho.strong" = "#7a43aa",
+  "undetermined" = "#c9c9c9"       
+)
+
+  #draw this plot as a stacked barplot, match colours to previous plot 
+p1 <- ggplot(score_file_ew_types_all_forstackedbarplot, aes(x = type, fill = evidence_weight)) + 
+    geom_bar(position = "fill") +  
+    scale_fill_manual(values = color_palette) + 
+    theme_minimal(base_size = 17) +
+    labs(y = "Proportion", x = "current ClinVar annotation") +
+    scale_y_continuous(labels = scales::percent_format())  # format y axis as %
+#Save stacked barplot
+ggsave("stackedBarplot_includePHD1pathevidence.pdf", p1, width = 6, height = 5)
+print(p1)
+
+  #draw this plot as a stacked barplot, match colours to previous plot 
+p2 <- ggplot(score_file_ew_types_no_PHD1_all_forstackedbarplot, aes(x = type, fill = evidence_weight)) + 
+    geom_bar(position = "fill") +
+    scale_fill_manual(values = color_palette) + 
+    theme_minimal(base_size = 17) +
+    labs(y = "Proportion", x = "current ClinVar annotation") +
+    scale_y_continuous(labels = scales::percent_format())  # format y axis as %
+#Save stacked barplot
+ggsave("stacked_barplotNoPHD1.pdf", p2, width = 6, height = 5)
+print(p2)
+
+#these plots are the same because no damaging variants with PHD1 clinvar included
+#how many non-ClinVar variants got evidence strengths, including those of the PHD1 domain that have damaging scores?
+#this only gives evidence strengths that are patho to PHD1 domain, otherwise they are not in this list
+final_variants_with_evidenceWeights_nonClinvar <-  final_variants_with_evidenceWeights[is.na(final_variants_with_evidenceWeights$type), ]
+```
+
+```{r AIRE_interactors, fig.show='hold', echo=FALSE}
+#This chunk extracts interacting positions for AIRE dimers, trimers and tetramers, makes a summary table of interacting positions, and makes boxplot of scores for each of these categories for Figure S11
+
+# Load map
+scores_for_interacts <- read.csv("20231018_WholeMap.csv", header=TRUE)
+# Subset only missense variants
+scores_missense <- scores_for_interacts %>%
+  filter(!grepl("=", hgvs_pro) & !grepl("Ter", hgvs_pro))
+# Extract position from hgvs_pro
+scores_missense$pos <- as.numeric(str_extract(scores_missense$hgvs_pro, "[0-9]+"))
+
+#draw boxplot of scores whether they are interacting vs non-interacting, print median, save interactors to file
+analyze_data_interaction_status <- function(data, title, width, height) {
+  
+  # Create the boxplot to compare interacting vs non-interacting
+  p_boxplot <- ggplot(data, aes(x = interaction_status, y = score)) + 
+    geom_boxplot() +
+    labs(title = title, x = "interaction status", y = "functional score") +
+    theme_minimal(base_size = 15)
+  
+  # Save the combined plot
+  print(p_boxplot)
+  ggsave(filename = paste0(title, "_boxplot.pdf"), plot = p_boxplot, width = width, height = height * 1.5)
+  
+  # Get unique interaction categories ("interacting" and "non-interacting")
+  categories <- unique(data$interaction_status)
+  
+  # Initialize an empty dataframe to store the results
+  results <- data.frame(Category1 = character(), Category2 = character(), 
+                        p.value = numeric(), estimate = numeric(), 
+                        Median1 = numeric(), Median2 = numeric())
+  
+  # Initialize a list to store significant comparisons
+  comparisons <- list()
+  
+  # Loop through each combination of two categories
+  for(i in 1:(length(categories)-1)){
+    for(j in (i+1):length(categories)){
+      category1 <- categories[i]
+      category2 <- categories[j]
+      
+      # Subset the data for the two categories
+      category1_data <- data[data$interaction_status == category1,]
+      category2_data <- data[data$interaction_status == category2,]
+      
+      # Perform the Wilcoxon test
+      test_result <- wilcox.test(category1_data$score, category2_data$score, 
+                                 mu=0, alt="two.sided", conf.int=T, conf.level = 0.95, 
+                                 paired=F, correct=T)
+      
+      # Extract the p-value and estimate
+      p_value <- test_result$p.value
+      estimate <- test_result$estimate
+      
+      # Calculate medians
+      median1 <- median(category1_data$score, na.rm = TRUE)
+      median2 <- median(category2_data$score, na.rm = TRUE)
+      
+      # Add the results to the dataframe
+      results <- rbind(results, data.frame(Category1 = category1, Category2 = category2, 
+                                           p.value = p_value, estimate = estimate, 
+                                           Median1 = median1, Median2 = median2))
+      
+      # Add the comparison for significance testing
+      comparisons <- append(comparisons, list(c(category1, category2)))
+    }
+  }
+  
+  # Get the number of tests performed
+  n_tests <- nrow(results)
+  
+  # Apply the Bonferroni correction to the p-values
+  results$p.value <- p.adjust(results$p.value, method = "bonferroni")
+  
+  # Output only significant results
+  sig_results <- results[results$p.value < 0.05,]
+  
+  # Add significance bars if there are significant results
+  if (nrow(sig_results) > 0) {
+    sig_comparisons <- comparisons[results$p.value < 0.05]
+    p_boxplot <- p_boxplot + stat_compare_means(comparisons = sig_comparisons, method = "wilcox.test", 
+                                                label = "p.signif", p.adjust.method = "bonferroni")
+    print(p_boxplot)
+    ggsave(p_boxplot, device = "pdf", filename = paste0(title, "_boxplot_with_significance.pdf"), width = width, height = height * 1.5)
+  }
+  
+  # Write significant results to a CSV file
+  write.csv(file = paste0(title, ".csv"), sig_results, row.names = FALSE)
+  
+  # Print the medians for both interacting and non-interacting categories
+  cat("Medians of categories:\n")
+  for(category in categories) {
+    median_value <- median(data[data$interaction_status == category,]$score, na.rm = TRUE)
+    cat("Category:", category, "Median:", median_value, "\n")
+  }
+}
+
+###AIRE DIMER
+# Load interacting positions
+interacting <- read.table("dimer_test_24e06_unrelaxed_rank_003_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+# Convert interacting positions to numeric for comparison
+interacting_pos <- unique(c(as.numeric(interacting$V2), as.numeric(interacting$V5)))
+#sort interacting pos from low to high and save as interactor file
+total_interactings <- c(as.numeric(interacting$V2), as.numeric(interacting$V5))
+#print list of interacting positions
+table(total_interactings)
+table(interacting_pos)
+#sort in numeric order
+ordered_interactingPos_Dimer <- unique(sort(total_interactings))
+#save vector
+write.csv(ordered_interactingPos_Dimer, "Dimer_interacting_positions.csv", row.names = FALSE)
+
+# Label positions as "interacting" or "non-interacting"
+scores_missense$interaction_status <- ifelse(scores_missense$pos %in% interacting_pos, 
+                                             "interacting_dimer", "non-interacting")
+analyze_data_interaction_status(scores_missense, "AIRE_DIMER", 3, 4)
+
+#TRIMER
+# Load interacting positions
+# Load map
+scores_for_interacts <- read.csv("20231018_WholeMap.csv", header=TRUE)
+# Subset only missense variants
+scores_missense <- scores_for_interacts %>%
+  filter(!grepl("=", hgvs_pro) & !grepl("Ter", hgvs_pro))
+
+interacting <- read.table("AIRE_TRIMER_fe51d_unrelaxed_rank_003_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_BC <- read.table("BC_AIRE_TRIMER_fe51d_unrelaxed_rank_003_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_trimer <- rbind(interacting, interacting_BC)
+
+interacting_pos_trimer <- unique(c(as.numeric(interacting_trimer$V2), as.numeric(interacting_trimer$V5)))
+total_interactings <- c(as.numeric(interacting_trimer$V2), as.numeric(interacting_trimer$V5))
+table(total_interactings)
+table(interacting_pos_trimer)
+
+# Subset only missense variants
+# Extract position from hgvs_pro
+scores_missense$pos <- as.numeric(str_extract(scores_missense$hgvs_pro, "[0-9]+"))
+# Label positions as "interacting" or "non-interacting"
+scores_missense$interaction_status <- ifelse(scores_missense$pos %in% interacting_pos_trimer, 
+                                             "interacting_trimer", "non-interacting")
+analyze_data_interaction_status(scores_missense, "AIRE_TRIMER", 3, 4)
+
+#TETRAMER
+# Load interacting positions
+interacting_1 <- read.table("1_Tetramer_AIRE_4_unrelaxed_rank_002_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_2 <- read.table("2_Tetramer_AIRE_4_unrelaxed_rank_002_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_3 <- read.table("3_Tetramer_AIRE_4_unrelaxed_rank_002_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+#tetramer
+interacting_tetramer <- rbind(interacting_1, interacting_2, interacting_3)
+interacting_pos_tetramer <- unique(c(as.numeric(interacting_tetramer$V2), as.numeric(interacting_tetramer$V5)))
+
+# Subset only missense variants
+scores_missense <- scores_for_interacts %>%
+  filter(!grepl("=", hgvs_pro) & !grepl("Ter", hgvs_pro))
+# Extract position from hgvs_pro
+scores_missense$pos <- as.numeric(str_extract(scores_missense$hgvs_pro, "[0-9]+"))
+# Label positions as "interacting" or "non-interacting"
+scores_missense$interaction_status <- ifelse(scores_missense$pos %in% interacting_pos_tetramer, 
+                                             "interacting", "non-interacting")
+analyze_data_interaction_status(scores_missense, "AIRE_TETRAMER", 3, 4)
+
+
+##prepare file for supplementals
+
+#DIMER
+interacting_dimer <- read.table("dimer_test_24e06_unrelaxed_rank_003_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+dimer_positions <- sort(unique(c(as.numeric(interacting_dimer$V2),
+                                 as.numeric(interacting_dimer$V5))))
+#TRIMER
+interacting_trimer_A <- read.table("AIRE_TRIMER_fe51d_unrelaxed_rank_003_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_trimer_B <- read.table("BC_AIRE_TRIMER_fe51d_unrelaxed_rank_003_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_trimer <- rbind(interacting_trimer_A, interacting_trimer_B)
+
+trimer_positions <- sort(unique(c(as.numeric(interacting_trimer$V2),
+                                  as.numeric(interacting_trimer$V5))))
+#TETRAMER
+interacting_t1 <- read.table("1_Tetramer_AIRE_4_unrelaxed_rank_002_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_t2 <- read.table("2_Tetramer_AIRE_4_unrelaxed_rank_002_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_t3 <- read.table("3_Tetramer_AIRE_4_unrelaxed_rank_002_alphafold2_multimer_v3_model_1_seed_000_1.ic")
+interacting_tetramer <- rbind(interacting_t1, interacting_t2, interacting_t3)
+tetramer_positions <- sort(unique(c(as.numeric(interacting_tetramer$V2),
+                                    as.numeric(interacting_tetramer$V5))))
+#make table
+interaction_table <- tibble(
+  Complex = c("dimer", "trimer", "tetramer"),
+  positions = c(
+    paste(dimer_positions, collapse = ","),
+    paste(trimer_positions, collapse = ","),
+    paste(tetramer_positions, collapse = ",")
+  )
+)
+
+write.table(interaction_table,
+            "AIRE_interacting_positions.csv",
+            sep = ",",
+            quote = TRUE,
+            row.names = FALSE)
+```
+
+```{r rare_vs_common, echo= FALSE}
+#This chunk analyzes singleton allele frequency vs all else for the calculation in the manuscript (no figure)
+#read in gnomAD data
+gnomAD_data <- read.csv("20250825_gnomAD_v4.1.0_ENSG00000160224.csv")
+gnomAD_data <- gnomAD_data[,c(12,14,15,20)]
+gnomAD_data <- gnomAD_data[gnomAD_data$VEP.Annotation == "missense_variant",]
+colnames(gnomAD_data)[colnames(gnomAD_data) == "Protein.Consequence"] ="hgvs_pro"
+
+#see duplicated entries and review manually what is happening
+# extract rows with duplicate variants
+gnomAD_duplicates <- gnomAD_data[gnomAD_data$hgvs_pro %in% 
+                                   gnomAD_data$hgvs_pro[duplicated(gnomAD_data$hgvs_pro)], ]
+
+# inspect
+print(head(gnomAD_duplicates))
+
+#there are duplicates, and we don't care about what gnomad says about the clinvar annotation, because we have the clinvars. so just keep first instance
+gnomAD_data <- gnomAD_data[!duplicated(gnomAD_data$hgvs_pro), ]
+
+#define gnomAD thresholds for common and rare
+freq_common <- 0.000001
+#singletons
+freq_rare <- 0.000001
+
+#initialize results table
+results_table <- data.frame(
+  common_threshold = numeric(),
+  rare_threshold = numeric(),
+  median_common = numeric(),
+  median_rare = numeric(),
+  p_value = numeric(),
+  significant = logical(),
+  n_common = integer(),
+  n_rare = integer()
+)
+
+#loop over thresholds
+for (i in seq_along(freq_common)) {
+  common_threshold <- freq_common[i]
+  rare_threshold <- freq_rare[i]
+  
+  #categorize variants
+  gnomAD_data_noAnnot <- gnomAD_data %>%
+    mutate(rarity = case_when(
+      Allele.Frequency > common_threshold ~ "common",
+      Allele.Frequency <= rare_threshold ~ "rare",
+      TRUE ~ NA
+    )) %>%
+    filter(!is.na(rarity)) 
+  
+  #merge with scores
+  common_rare_wScores <- merge(gnomAD_data_noAnnot, scores, by = "hgvs_pro")
+  
+  #skip if not enough data
+  if (nrow(common_rare_wScores) < 2) next
+  
+  #calculate medians
+  medians <- common_rare_wScores %>%
+    group_by(rarity) %>%
+    summarise(median_score = median(score, na.rm = TRUE)) %>%
+    pivot_wider(names_from = rarity, values_from = median_score)
+  
+  #count variants in each group
+  counts <- common_rare_wScores %>%
+    count(rarity) %>%
+    pivot_wider(names_from = rarity, values_from = n)
+  
+  #perform wilcoxon test
+  test_result <- wilcox.test(score ~ rarity, data = common_rare_wScores)
+  
+  #save to results table
+  results_table <- rbind(results_table, data.frame(
+    common_threshold = common_threshold,
+    rare_threshold = rare_threshold,
+    median_common = ifelse("common" %in% names(medians), medians$common, NA),
+    median_rare = ifelse("rare" %in% names(medians), medians$rare, NA),
+    p_value = test_result$p.value,
+    significant = test_result$p.value < 0.05,
+    n_common = ifelse("common" %in% names(counts), counts$common, 0),
+    n_rare = ifelse("rare" %in% names(counts), counts$rare, 0)
+  ))
+  #create boxplot
+  map_commonRare <- ggplot(common_rare_wScores, aes(x = rarity, y = score)) + 
+    geom_boxplot(outlier.size = 0.3) + 
+    theme_minimal(base_size = 15) + 
+    labs(x = "", y = "variant functional score")
+  #add significance bar if significant
+  if (test_result$p.value < 0.05) {
+    map_commonRare <- map_commonRare + 
+      stat_compare_means(method = "wilcox.test", label = "p.signif", hide.ns = TRUE)
+  }
+  #save plot
+  ggsave(
+    filename = paste0("AIRE_common_rare_boxplot_", common_threshold, "_", rare_threshold, ".pdf"), 
+    plot = map_commonRare, 
+    height = 5, width = 3, device = "pdf"
+  )
+}
+
+#view results
+print(results_table)
+
+#save to csv
+write.csv(results_table, "AIRE_common_rare_summary_all_cutoffs.csv", row.names = FALSE)
+```
+
+
+```{r lollipop_AIRE, echo = FALSE}
+#This script shows discordant and concordant ClinVar scores along the AIRE protein for Figure S16A
+clinvar1 <- clinvar_hgvsp_onlyKnown_oneStar
+map <- read.csv("Rep_Intersection_merged_map.csv", header=TRUE)
+colnames(map)[colnames(map) == "hgvs_pro"] ="base__achange"
+colnames(map)[colnames(map) == "score"] ="VEP_map"
+colnames(clinvar1)[colnames(clinvar1) == "hgvsp"] ="base__achange"
+#match data to Cindy's format
+AIREdata <- merge(map, clinvar1, by = "base__achange")
+#change clinvar notes to script-compatible notes
+AIREdata <- AIREdata %>%
+  mutate(referenceSet = case_when(
+    grepl("Positive", AIREdata$referenceSet) ~ "P/LP",
+    grepl("Negative", AIREdata$referenceSet) ~ "B/LB",
+    TRUE ~ "no known"
+  ))
+colnames(AIREdata)[colnames(AIREdata) == "referenceSet"] ="clinvar"
+# Note about my input: 'base__achange' is equivalent of hgvsp with format p.Aaa000Aaa. 'clinvar' value is P/LP or B/LB (no VUS or conflicting). VEP_map is score 
+withpos <- AIREdata %>%
+  mutate(pos = as.numeric(str_extract(base__achange, "(?<=^p\\.[A-Za-z]{3})[0-9]+(?=[A-Za-z]{3}$)"))) %>% # allows 4 digit position numbers
+  select(base__achange, clinvar, VEP_map, pos) #%>% # Change VEP
+ #rename(VEP = VEP_map)
+colnames(withpos)[colnames(withpos) == "VEP_map"] ="VEP"
+threshold = 0.5 # CHANGE THRESHOLD depending on your VEP/map
+
+# ground truth as binary (1 = P/LP, 0 = B/LB)
+labeled <- withpos %>%
+  mutate(
+    truth = ifelse(clinvar == "P/LP", 1, 0),
+    predicted_label = ifelse(VEP <= threshold, 1, 0)
+  )
+
+labeled <- labeled %>%
+  mutate(
+    prediction_type = case_when(
+      truth == 1 & predicted_label == 1 ~ "Pathogenic Concordant",
+      truth == 0 & predicted_label == 0 ~ "Benign Concordant",
+      truth == 0 & predicted_label == 1 ~ "Benign with Score ≤ 0.5",
+      truth == 1 & predicted_label == 0 ~ "Pathogenic with Score > 0.5"
+    )
+  )
+
+#extract discordant variants
+discordant_Var <- labeled[!grepl("Concordant", labeled$prediction_type),]
+#save discordant variants with all information
+#consistant columns
+discordant_variants <- discordant_Var %>% 
+  mutate(hgvs_pro = base__achange) %>%  # create hgvs_pro for joining
+  select(hgvs_pro)
+#scores for discordant var
+discord_var_scores <- score_file_ew_types %>%
+  semi_join(discordant_variants, by = "hgvs_pro")
+write.csv(discord_var_scores, "discordantVarscores.csv", row.names = FALSE)
+
+# lollipop colors
+colors <- c("Pathogenic Concordant" = "red", "Benign Concordant" = "red", "Benign with Score ≤ 0.5" = "black", "Pathogenic with Score > 0.5" = "black")
+
+# protein domain ranges
+domain_data <- data.frame(
+  domain = c("CARD", "Disordered", "SAND not disordered", "Disordered",
+             "PHD1", "Disordered", "PHD2", "Disordered", "Cterm"),
+  start = c(1, 106, 181, 234, 296, 348, 434, 489, 515),
+  end   = c(105, 178, 233, 290, 343, 382, 475, 508, 545)
+)
+
+# where to place domain bars
+domain_data$ymin <- 0.48
+domain_data$ymax <- 0.52
+
+domain_colors <- c(
+  "CARD"               = "#FF6F61",  # coral red
+  "Disordered"         = "#BDC3C7",  # light gray
+  "SAND not disordered"= "#6C5B7B",  # muted violet
+  "PHD1"               = "#1B998B",  # teal blue
+  "PHD2"               = "#FFB400",  # golden yellow
+  "Cterm"              = "#8D8741"   # olive green
+)
+
+# Lollipop plot
+main_plot <- ggplot(labeled, aes(x = pos, y = VEP, color = prediction_type)) +
+  geom_segment(aes(xend = pos, y = threshold, yend = VEP), size = 0.2) + 
+  geom_point(size = 1, alpha = 0.6) + 
+  scale_color_manual(values = colors) +
+  geom_hline(yintercept = 0.371, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 0.667, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = threshold, linetype = "dotted", color = "black") +
+  geom_hline(yintercept = -0.733, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = -0.701, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = -0.599, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = -0.110, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 0.150,  linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 0.915,  linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 1.565,  linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 1.699,  linetype = "dotted", color = "grey50") +
+  geom_rect(
+    data = domain_data,
+    aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax, fill = domain),
+    inherit.aes = FALSE,
+    color = NA,
+  ) +
+  scale_fill_manual(values = domain_colors) +  # <-- custom domain scheme
+  theme_minimal() +
+  labs(
+    x = "Position",
+    y = "Score",
+    color = "Concordance", 
+    fill = "AIRE Domains"
+  ) +
+  coord_cartesian(ylim = c(min(labeled$VEP), max(labeled$VEP)))
+
+print(main_plot)
+ggsave(filename = "lollipop_AIRE.pdf", main_plot, device = pdf, width = 7, height =5)
+```
+
+```{r VUS_plot_overProtein, echo = FALSE}
+#This script shows VUS scores and evidence strengths along the AIRE protein for Figure S16B
+#pull random set of clinvar VUS variants for discussion question
+# pull random set of clinvar VUS variants for discussion question
+ClinVarSet <- read.csv("20250825_AIRE_missense_clinvar_result.csv")
+VUS_set <- ClinVarSet[ClinVarSet$Germline.classification == "Uncertain significance",]
+VUSvariants <- unique(VUS_set$Protein.change)
+RandomSample <- sample(VUSvariants, 33)
+write.csv(RandomSample, "randomVUSList.csv", row.names = FALSE)
+
+# extract VUS score and evidence strengths that are non-undetermined
+VUS_lollipop <- score_file_ew_types[which(
+  score_file_ew_types$type == "VUS" &
+  !score_file_ew_types$evidence_weight == "undetermined"),
+]
+
+threshold = 0.5
+
+# protein domain ranges
+domain_data <- data.frame(
+  domain = c("CARD", "Disordered", "SAND not disordered", "Disordered",
+             "PHD1", "Disordered", "PHD2", "Disordered", "Cterm"),
+  start = c(1, 106, 181, 234, 296, 348, 434, 489, 515),
+  end   = c(105, 178, 233, 290, 343, 382, 475, 508, 545)
+)
+
+# where to place domain bars (same placement as first script)
+domain_data$ymin <- 0.48
+domain_data$ymax <- 0.52
+
+# domain colors
+domain_colors <- c(
+  "CARD"               = "#FF6F61",
+  "Disordered"         = "#BDC3C7",
+  "SAND not disordered"= "#6C5B7B",
+  "PHD1"               = "#1B998B",
+  "PHD2"               = "#FFB400",
+  "Cterm"              = "#8D8741"
+)
+
+# lollipop plot (same style as first script)
+VUSplot <- ggplot(VUS_lollipop, aes(x = pos, y = score)) +
+
+  geom_segment(aes(xend = pos, y = threshold, yend = score), size = 0.2) +
+
+  geom_point(size = 1, alpha = 0.6, color = "black") +
+
+  geom_hline(yintercept = 0.371, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 0.667, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = threshold, linetype = "dotted", color = "black") +
+  geom_hline(yintercept = -0.733, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = -0.701, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = -0.599, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = -0.110, linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 0.150,  linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 0.915,  linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 1.565,  linetype = "dotted", color = "grey50") +
+  geom_hline(yintercept = 1.699,  linetype = "dotted", color = "grey50") +
+
+  geom_rect(
+    data = domain_data,
+    aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax, fill = domain),
+    inherit.aes = FALSE,
+    color = NA
+  ) +
+
+  scale_fill_manual(values = domain_colors) +
+
+  theme_minimal() +
+
+  labs(
+    x = "Position",
+    y = "Score",
+    fill = "AIRE Domains"
+  ) +
+
+  coord_cartesian(
+    xlim = c(1, 545),
+    ylim = c(min(VUS_lollipop$score), max(VUS_lollipop$score))
+  )
+
+print(VUSplot)
+
+ggsave("VUSDistributionplot.pdf", VUSplot, width = 7, height = 5)
+```
+
+```{r to_amino_acid_category, echo = FALSE}
+#this chunk is the function to run the disorder vs not disorder by category (plots below)
+analyze_data_TO <- function(data, title, width, height) {
+  # Create the initial plot
+  data <- data[data$aa_type_To != data$aa_type_From,]
+  p <- ggplot(data, aes(x = aa_type_To, y = score)) + 
+    geom_boxplot() +
+    labs(x = "to amino acid type", y = "variant functional score") +
+    theme_minimal(base_size = 15)
+  
+  # Get all unique categories
+  categories <- unique(data$aa_type_To)
+  
+  # Initialize an empty dataframe to store the results
+  results <- data.frame(Category1 = character(), Category2 = character(), 
+                        p.value = numeric(), estimate = numeric(), 
+                        Median1 = numeric(), Median2 = numeric(), stringsAsFactors = FALSE)
+  
+  # List to store comparisons for stat_compare_means
+  comparisons <- list()
+  
+  # Loop through each combination of two categories
+  for(i in 1:(length(categories)-1)){
+    for(j in (i+1):length(categories)){
+      category1 <- categories[i]
+      category2 <- categories[j]
+      
+      # Subset the data for the two categories
+      category1_data <- data[data$aa_type_To == category1,]
+      category2_data <- data[data$aa_type_To == category2,]
+      
+      # Perform the Wilcoxon test
+      test_result <- wilcox.test(category1_data$score, category2_data$score, 
+                                 mu=0, alt="two.sided", conf.int=T, conf.level = 0.95, 
+                                 paired=F, correct=T)
+      
+      # Extract the p-value and estimate
+      p_value <- test_result$p.value
+      estimate <- test_result$estimate
+      
+      # Calculate medians
+      median1 <- median(category1_data$score, na.rm = TRUE)
+      median2 <- median(category2_data$score, na.rm = TRUE)
+      
+      # Add the results to the dataframe
+      results <- rbind(results, data.frame(Category1 = category1, Category2 = category2, 
+                                           p.value = p_value, estimate = estimate, 
+                                           Median1 = median1, Median2 = median2))
+    }
+  }
+  
+  # Apply the Bonferroni correction
+  results$p.value <- p.adjust(results$p.value, method = "bonferroni")
+  
+  # Filter only significant results
+  sig_results <- results[results$p.value < 0.05,]
+  
+  # Write significant results to file
+  write.csv(file = paste0(title, ".csv"), sig_results, row.names = FALSE)
+  
+  # Add significance bars to the plot for significant results
+  if (nrow(sig_results) > 0) {
+    sig_comparisons <- mapply(function(cat1, cat2) c(cat1, cat2), 
+                              sig_results$Category1, sig_results$Category2, 
+                              SIMPLIFY = FALSE)
+    p <- p + stat_compare_means(comparisons = sig_comparisons, method = "wilcox.test", 
+                                label = "p.signif", p.adjust.method = "bonferroni")
+  }
+  
+  # Print the plot to PDF
+  ggsave(p, device = "pdf", filename = paste0(title, ".pdf"), width = width, height = height)
+
+  # Print the plot to the console
+  print(p)
+  
+  # Print the medians
+  cat("Medians of categories:\n")
+  for(category in categories) {
+    median_value <- median(data[data$aa_type_To == category,]$score, na.rm = TRUE)
+    cat("Category:", category, "Median:", median_value, "\n")
+  }
+}
+```
+
+```{r disordered_regions_analysis}
+#this chunk analyzes disordered regions by category for Figure S13 (only hydrophobic used) 
+disorder <- map_processed[map_processed$pos %in% c(101:178, 234:290, 348:382, 489:508), ]
+not_disordered <- map_processed[!(map_processed$pos %in% c(101:178, 234:290, 348:382, 489:508)), ]
+
+analyze_data_TO_simple(not_disordered, "hydrophobic", "change_to_hydrophobic_not_disordered.pdf", "change_to_hydrophobic_not_disordered.csv")
+analyze_data_TO_simple(disorder, "hydrophobic", "change_to_hydrophobic_disorder.pdf", "change_to_hydrophobic_disorder.csv")
+analyze_data_TO_simple(not_disordered, "neg_charged", "change_to_negcharge_not_disordered.pdf", "change_to_negcharge_not_disordered.csv")
+analyze_data_TO_simple(disorder, "neg_charged", "change_to_negcharge_disorder.pdf", "change_to_negcharge_disorder.csv")
+analyze_data_TO_simple(not_disordered, "pos_charged", "change_to_poscharge_not_disordered.pdf", "change_to_poscharge_not_disordered.csv")
+analyze_data_TO_simple(disorder, "pos_charged", "change_to_poscharge_disorder.pdf", "change_to_poscharge_disorder.csv")
+analyze_data_TO_simple(not_disordered, "proline", "change_to_proline_not_disordered.pdf", "change_to_proline_not_disordered.csv")
+analyze_data_TO_simple(disorder, "proline", "change_to_proline_disorder.pdf", "change_to_proline_disorder.csv")
+```
+
+```{r follow_up_variants, echo = FALSE}
+#this chunk generates the barplots for follow up variants in Figure S14
+
+data <- read.csv("2023Dec21_AIRE_FollowUp_Plot.csv")
+
+#add data label type
+data$variant_type <- c("control", "control", "control", "known LOF", 
+                       "putative LOF", "putative LOF", "putative GOF", 
+                       "putative GOF", "putative GOF")
+
+data$Sample <- factor(data$Sample, levels = c('untransfected control','empty vector control','WT', 'R92W', 'P126V', 'P129R', 'A138M','P162H','P162Y'))
+
+p <- ggplot(data, aes(x=Sample, y=average_Wtset, fill = variant_type)) + 
+  geom_bar(stat="identity",
+           position=position_dodge()) +
+  geom_errorbar(aes(ymin=average_Wtset-sd_Wtset, ymax=average_Wtset+sd_Wtset), width=.2,
+                position=position_dodge(.9)) +
+  theme_minimal(base_size = 18) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  ylab("Frequency to the right of top 1% of WT cells")
+
+
+p + theme(text = element_text(size=16),
+      axis.text.x = element_text(angle=90, hjust=1))
+
+
+attempt <- read.csv("20240628_percents.csv")
+
+# Rename "mCh" to "empty_vector"
+attempt <- attempt %>%
+  mutate(Sample = ifelse(Sample == "mCh", "empty_vector", Sample))
+#removed untransfected
+attempt <- attempt[!grepl("UT", attempt$Sample),]
+
+# Calculate SD and mean of each variant
+test <- attempt %>%
+  group_by(Sample) %>%
+  summarise(
+    mean_gatefreq = mean(frequency, na.rm = TRUE),
+    sd_gatefreq = ifelse(n() > 1, sd(frequency, na.rm = TRUE), NA),
+    count = n()
+  )
+
+# Create a file to write the output
+output_file <- file("output.csv", "w")
+
+# Perform the t-test manually
+for (i in 1:nrow(test)) {
+  if (test$Sample[i]!= "WT" && test$Sample[i]!= "empty_vector") {
+    # Perform the t-test manually between WT and current row
+    wt_result <- t_test_manual(test$mean_gatefreq[test$Sample == "WT"], 
+                               test$sd_gatefreq[test$Sample == "WT"], 
+                               3, 
+                               test$mean_gatefreq[i], 
+                               test$sd_gatefreq[i], 
+                               3)
+    
+    # Perform the t-test manually between empty_vector and current row
+    ev_result <- t_test_manual(test$mean_gatefreq[test$Sample == "empty_vector"], 
+                               test$sd_gatefreq[test$Sample == "empty_vector"], 
+                               3, 
+                               test$mean_gatefreq[i], 
+                               test$sd_gatefreq[i], 
+                               3)
+    
+    # Multiply the p-value by 2 to bonferroni correct for 2 tests per variant
+    wt_result$p_value <- wt_result$p_value * 2
+    ev_result$p_value <- ev_result$p_value * 2
+    
+    # Write the results to the output file
+    writeLines(c(paste("Results for", test$Sample[i]), 
+                 paste("WT: t-statistic =", wt_result$t_stat, ", p-value =", wt_result$p_value), 
+                 paste("empty_vector: t-statistic =", ev_result$t_stat, ", p-value =", ev_result$p_value), 
+                 ""), output_file)
+  }
+}
+
+# Perform the t-test manually between empty_vector and WT
+ev_wt_result <- t_test_manual(test$mean_gatefreq[test$Sample == "empty_vector"], 
+                              test$sd_gatefreq[test$Sample == "empty_vector"], 
+                              3, 
+                              test$mean_gatefreq[test$Sample == "WT"], 
+                              test$sd_gatefreq[test$Sample == "WT"], 
+                              3)
+
+# Multiply the p-value by 2 to bonferroni correct for 2 tests per variant
+ev_wt_result$p_value <- ev_wt_result$p_value * 2
+
+# Write the results to the output file
+writeLines(c(paste("Results for empty_vector vs WT"), 
+             paste("t-statistic =", ev_wt_result$t_stat, ", p-value =", ev_wt_result$p_value), 
+             ""), output_file)
+
+# Close the output file
+close(output_file)
+
+test$Sample <- factor(test$Sample, levels = c('empty_vector','WT', 'R92W', 'P126V', 'P129R', 'A138M','P162H','P162Y'))
+
+test <- test %>%
+  mutate(type = case_when(
+    Sample == 'empty_vector' ~ 'empty_vector',
+    Sample == 'WT' ~ 'WT',
+    Sample == 'R92W' ~ 'known pathogenic',
+    Sample %in% c('P126V', 'P129R') ~ 'new LOF',
+    Sample %in% c('A138M', 'P162H', 'P162Y') ~ 'increased',
+    TRUE ~ NA_character_
+  ))
+
+# Create the plot
+p <- ggplot(test, aes(x = Sample, y = mean_gatefreq, fill = type)) + 
+  geom_bar(stat = "identity", position = position_dodge()) + 
+  geom_errorbar(aes(ymin = mean_gatefreq - sd_gatefreq, ymax = mean_gatefreq + sd_gatefreq), width = 0.2, position = position_dodge(width = 0.9)) + 
+  labs(x = "variant", y = "gate frequency") + 
+  scale_y_continuous(expand = c(0, 0)) + 
+  scale_fill_manual(values = c("empty_vector" = "gray", "WT" = "black", "known pathogenic" = "magenta", "new LOF" = "lightpink", "increased" = "lightgreen")) + 
+  theme_minimal(base_size = 15)
+
+ggsave(filename = "followup_barplot.pdf", p, width = 8, height = 5)
+print(p)
+
+```
+
+```{r dominant_negative_variants, fig.show='hold', echo=FALSE}
+#This chunk makes the plots for dominant negative variants for Figure S17
+
+refset <- read.csv("20250825_clinvar_refset_oneStar.csv")
+domInheritance <- read.csv("20240624_inher_patterns.csv")
+map <- read.csv("20251110_finalScoreswEvidenceWeights_test.csv")
+map_filtered <- map[map$numberofBioReps==2,]
+
+#change map notation to match dom inheritance
+map_filtered$hgvs_pro <- mgsub(map_filtered$hgvs_pro, pattern = c("Ala", "Arg", "Asn", "Asp", "Cys", "Gln",
+                                                "Glu", "Gly", "His", "Ile", "Leu", "Lys",
+                                                "Met", "Phe", "Pro", "Ser",
+                                                "Thr", "Trp", "Tyr", "Val", "=", "Ter"), 
+                      replacement = c("A", "R", "N", "D", "C", "Q", "E", 
+                                      "G", "H", "I", "L", "K", "M", "F", "P",
+                                      "S", "T", "W", "Y", "V", "=", "*"))
+#remove p. from notation
+map_filtered$hgvs_pro <- str_replace(map_filtered$hgvs_pro, "p.", "")
+colnames(map_filtered)[colnames(map_filtered) == "hgvs_pro"] <- "Variant"
+
+#Change variant notation to match the dom inheritance amino acid change style
+refset$hgvsp <- mgsub(refset$hgvsp, pattern = c("Ala", "Arg", "Asn", "Asp", "Cys", "Gln",
+                                                        "Glu", "Gly", "His", "Ile", "Leu", "Lys",
+                                                        "Met", "Phe", "Pro", "Ser", "Thr",
+                                                        "Trp", "Tyr", "Val", "=", "Ter"), 
+                          replacement = c("A", "R", "N", "D", "C", "Q", "E", 
+                                          "G", "H", "I", "L", "K", "M", "F", "P",
+                                          "S", "T", "W", "Y", "V", "=", "*"))
+#remove p. from notation
+refset$hgvsp <- str_replace(refset$hgvsp, "p.", "")
+
+#Eliminate variants with dominant inheritance from reference set
+#which ones overlap
+domneg_inRefSet <- refset[(refset$hgvsp %in% domInheritance$Variant), ]
+#remove these from refset
+refset <- refset[!(refset$hgvsp %in% domInheritance$Variant), ]
+
+#name refset as autosomal recessive or benign
+refset$referenceSet <- ifelse(refset$referenceSet == "Negative", "Benign", "Autosomal Recessive")
+#rename refset
+colnames(refset)[colnames(refset) == "referenceSet"] <- "Inheritance"
+colnames(refset)[colnames(refset) == "hgvsp"] <- "Variant"
+#maintain only refset columns needed
+refset <- refset[,c("Inheritance", "Variant")]
+
+#combine sets
+total <- rbind(refset,domInheritance)
+
+#find position and label by domain
+# prepare regular expression
+regexp <- "[[:digit:]]+"
+# process string
+total$pos <- as.numeric(str_extract(total$Variant, regexp))
+
+#label by position
+total <- total %>%
+  mutate(Domain = case_when(
+    pos >= 1 & pos <= 105 ~ "CARD",
+    pos >= 101 & pos <= 178 ~ "Disordered",
+    pos >= 181 & pos <= 280 ~ "SAND",
+    pos >= 280 & pos <= 290 ~ "Disordered",
+    pos >= 296 & pos <= 343 ~ "PHD1",
+    pos >= 348 & pos <= 382 ~ "Disordered",
+    pos >= 434 & pos <= 475 ~ "PHD2",
+    pos >= 489 & pos <= 503 ~ "Disordered",
+    pos >= 515 & pos <= 545 ~ "C-term",
+    TRUE ~ "no annotation"
+  ))
+
+# Filter domInheritance to exclude PHD1 domain
+#find all rows that are DomNeg
+total_domNeg <- total[total$Inheritance == "DomNeg",]
+#label those in the PHD1 domain
+total_domNeg_PHD1 <- total_domNeg[total_domNeg$Domain == "PHD1",]
+#eliminate those in the PHD1 domain from total
+total_domNeg <- total_domNeg[!total_domNeg$Domain == "PHD1",]
+#change this to another category
+total_domNeg$Inheritance <- "Dominant negative outside PHD1"
+total_domNeg_PHD1$Inheritance <- "Dominant negative within PHD1"
+
+#add this back to the total as a separate category
+total <- rbind(total, total_domNeg, total_domNeg_PHD1)
+#remove rows that have total DomNeg, double check that's duplicated
+total <- total[!total$Inheritance=="DomNeg",]
+nrow(total)
+length(unique(total$Variant))
+
+#merge with map_filtered scores
+total_scores <- merge(total, map_filtered, by = "Variant")
+
+#find medians
+total_scores %>%
+  group_by(Inheritance) %>%
+  summarise(median_score = median(score))
+
+# Draw boxplot by inheritance
+byInheritance <- ggplot(total_scores, aes(x = Inheritance, y = score)) + 
+  geom_boxplot() + 
+  theme_minimal(base_size = 15) + 
+  labs(x = "variant category", y = "variant functional score", color = "domain")
+
+# Test significance
+inheritance_types <- unique(total_scores$Inheritance)
+
+results <- sapply(inheritance_types, function(x) {
+  sapply(inheritance_types, function(y) {
+    if (x != y) {
+      wilcox.test(score ~ Inheritance, data = total_scores %>% 
+                    filter(Inheritance %in% c(x, y)), 
+                  mu = 0, alt = "two.sided", conf.int = TRUE, conf.level = 0.95, 
+                 correct = TRUE)$p.value
+    } else {
+      NA
+    }
+  })
+})
+
+results <- as.data.frame(results)
+rownames(results) <- inheritance_types
+colnames(results) <- inheritance_types
+
+# Apply the Bonferroni correction to the p-values
+results[] <- p.adjust(as.matrix(results), method = "bonferroni")
+
+# Print the corrected results
+print(results)
+
+# Create a data frame for significant results
+sig_results <- results %>%
+  as.data.frame() %>%
+  rownames_to_column("Category1") %>%
+  pivot_longer(-Category1, names_to = "Category2", values_to = "p_value") %>%
+  filter(!is.na(p_value) & p_value < 0.05)
+
+# Ensure unique comparisons
+sig_results <- sig_results %>%
+  rowwise() %>%
+  mutate(comparison = paste(sort(c(Category1, Category2)), collapse = "-")) %>%
+  ungroup() %>%
+  distinct(comparison, .keep_all = TRUE) %>%
+  select(Category1, Category2, p_value)
+
+sig_comparisons <- lapply(seq_len(nrow(sig_results)), function(i) {
+  c(sig_results$Category1[i], sig_results$Category2[i])
+})
+
+# Add significance bars to the plot for significant results
+if (nrow(sig_results) > 0) {
+  byInheritance <- byInheritance + stat_compare_means(comparisons = sig_comparisons, 
+                                                      method = "wilcox.test", 
+                                                      label = "p.signif", 
+                                                      p.adjust.method = "bonferroni")
+}
+
+# Display the plot
+print(byInheritance)
+ggsave(filename = "by_inheritance.pdf", byInheritance, width = 4, height =4)
+
+# Define your custom color palette
+domain_colors <- c(
+  "CARD"               = "#FF6F61",  # coral red
+  "Disordered"         = "#BDC3C7",  # light gray
+  "SAND"               = "#6C5B7B",  # muted violet
+  "PHD1"               = "#1B998B",  # teal blue
+  "PHD2"               = "#FFB400",  # golden yellow
+  "C-term"            = "#8D8741",   # olive green
+  "no annotation"      = "#3C91E6" #blue
+)
+
+# Plot
+byVariant_noPHD1 <- ggplot(total_scores, aes(x = Inheritance, y = score, color = Domain)) + 
+geom_point(position = position_jitter(width = 0.05), size = 2) + 
+  geom_text(
+    aes(label = Variant),
+    nudge_x = 0.15,        # slight horizontal offset
+    nudge_y = 0.05,        # slight vertical offset
+    angle = 30,            # rotate labels a bit
+    size = 2,
+    hjust = 0              # align text to the left of the point
+  ) +
+  scale_color_manual(values = domain_colors) +  # Apply custom colors
+  theme_minimal(base_size = 15) + 
+  labs(
+    x = "Variant category", 
+    y = "Variant functional score", 
+    color = "Domain"
+  )
+
+# Show plot
+print(byVariant_noPHD1)
+
+# Save plot
+ggsave(
+  filename = "by_inheritance_wVariants.pdf", 
+  plot = byVariant_noPHD1, 
+  width = 5, 
+  height = 4
+)
+
+######Note, the DN variants reported in ClinVar were G228W, C311Y and P326L
+```
+
+```{r CAM_genopheno, echo = FALSE}
+#This script analyzes and makes figures for genotype to phenotype correlations for Figure 4A, Figure 4B, and Figure S18
+process_patient_data <- function(with_PHD1 = TRUE) {
+  # Read input files
+  patients <- read.csv("genphen_readable.csv")
+  map <- read.csv("20231018_WholeMap.csv")
+  
+  # Remove all brackets from dataset
+  patients <- data.frame(apply(patients, 2, function(x) gsub("[(&)]", "", x)))
+  colnames(patients)[colnames(patients) == "allele.1.protein"] <- "hgvs_pro"
+  
+  # Merge allele 1 with scores
+  merge1 <- merge(patients, map, by = "hgvs_pro", all.x = TRUE)
+  colnames(merge1)[colnames(merge1) == "score"] <- "allele_1_score"
+  colnames(merge1)[colnames(merge1) == "se"] <- "allele_1_se"
+  
+  # Merge allele 2 with scores
+  colnames(merge1)[colnames(merge1) == "hgvs_pro"] <- "allele.1.protein"
+  colnames(merge1)[colnames(merge1) == "allele.2.protein"] <- "hgvs_pro"
+  merge2 <- merge(merge1, map, by = "hgvs_pro", all.x = TRUE)
+  colnames(merge2)[colnames(merge2) == "score"] <- "allele_2_score"
+  colnames(merge2)[colnames(merge2) == "se"] <- "allele_2_se"
+  colnames(merge2)[colnames(merge2) == "hgvs_pro"] <- "allele.2.protein"
+  
+  # Fill in scores for splice variants, WT, and ter/alamut
+  merge2$allele_2_score <- ifelse(grepl("[-+]", merge2$allele.2.cDNA), 0, merge2$allele_2_score)
+  merge2$allele_2_score <- ifelse(merge2$allele.2.cDNA == "", 1, merge2$allele_2_score)
+  merge2$allele_2_score <- ifelse(grepl("Ter|alamut", merge2$allele.2.protein), 0, merge2$allele_2_score)
+  
+  # Remove patients missing scores
+  merge2 <- merge2[!(is.na(merge2$allele_1_score) | is.na(merge2$allele_2_score)), ]
+  
+  # Calculate total scores
+  merge2$tot_score <- rowSums(merge2[, c("allele_1_score", "allele_2_score")], na.rm = TRUE)
+  
+  # Count phenotypes per patient
+  merge2 <- merge2 %>% 
+    mutate(count = lengths(strsplit(Phenotypes, ","))) %>%
+    mutate(Phenotypes = gsub("†", "", Phenotypes))
+  
+  # Handle PHD1 filtering if needed
+  if (!with_PHD1) {
+    regexp <- "[[:digit:]]+"
+    merge2$pos1 <- as.numeric(str_extract(merge2$allele.1.protein, regexp))
+    merge2$pos2 <- as.numeric(str_extract(merge2$allele.2.protein, regexp))
+    merge2$pos2[grepl("Ter", merge2$allele.2.protein)] <- NA
+    merge2 <- merge2[!(merge2$pos1 >= 296 & merge2$pos1 <= 343), ]
+    merge2 <- merge2[is.na(merge2$pos2) | !(merge2$pos2 >= 296 & merge2$pos2 <= 343), ]
+  }
+  
+  # Group patients into dyad vs not
+  merge2 <- merge2 %>%
+    mutate(label = case_when(
+      (grepl("Add", Phenotypes) & grepl("HP", Phenotypes)) |
+        (grepl("Add", Phenotypes) & grepl("CMC", Phenotypes)) |
+        (grepl("CMC", Phenotypes) & grepl("HP", Phenotypes)) ~ "dyad",
+      TRUE ~ "else"
+    ))
+  
+ # Calculate and print medians for dyad and else groups
+  median_dyad <- median(merge2$tot_score[merge2$label == "dyad"], na.rm = TRUE)
+  median_else <- median(merge2$tot_score[merge2$label == "else"], na.rm = TRUE)
+  
+  cat("Median CAM score for dyad group:", median_dyad, "\n")
+  cat("Median CAM score for else group:", median_else, "\n")
+
+  # Save patients with dyad and without dyad
+  condition <- if (with_PHD1) "with_PHD1" else "noPHD1"
+  write.csv(merge2[merge2$label == "dyad", ], 
+            file = paste0("patients_with_dyad_", condition, ".csv"), 
+            row.names = FALSE)
+  write.csv(merge2[merge2$label == "else", ], 
+            file = paste0("patients_without_dyad_", condition, ".csv"), 
+            row.names = FALSE)
+  
+  # Calculate correlation
+  cor_result <- cor.test(merge2$tot_score, merge2$count)
+  
+  # Generate scatterplot
+  condition <- if (with_PHD1) "with_PHD1" else "noPHD1"
+  scatterplot <- ggplot(merge2, aes(x = tot_score, y = count)) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    labs(x = "CAM score",
+         y = "Number of APS-1 symptoms") +
+    theme_minimal(base_size = 15) +
+    annotate("text", x = min(merge2$tot_score), 
+             y = max(merge2$count), 
+             label = paste("R =", round(cor_result$estimate, 2), ", p =", format.pval(cor_result$p.value, digits = 2)),
+             hjust = 0, vjust = 1)
+  
+  ggsave(filename = paste0("CAM_SympNumber_", condition, ".pdf"), scatterplot, width = 7, height = 5)
+  
+  # Generate boxplot for dyad vs else
+  boxplot <- ggplot(data = merge2, aes(label, tot_score)) +
+    geom_boxplot() +
+    labs(x = "Patient symptom group",
+         y = "CAM score") +
+    theme_minimal(base_size = 15)
+  
+  # Test significance and add significance bars if needed
+  results <- wilcox.test(tot_score ~ label, data = merge2, 
+                         mu = 0, alt = "two.sided", conf.int = TRUE, conf.level = 0.95, 
+                         correct = TRUE)$p.value
+  results <- p.adjust(results, method = "bonferroni")
+  print(results)
+  if (results < 0.05) {
+    boxplot <- boxplot + stat_compare_means(comparisons = list(c("dyad", "else")), 
+                                            method = "wilcox.test", 
+                                            label = "p.signif", 
+                                            p.adjust.method = "bonferroni")
+  }
+  
+  ggsave(filename = paste0("all_dyad_vs_else_", condition, ".pdf"), boxplot, width = 4, height = 4)
+  
+  return(list(scatterplot = scatterplot, boxplot = boxplot))
+}
+
+#Process geno-pheno
+# With PHD1
+process_patient_data(with_PHD1 = TRUE)
+
+# Without PHD1
+process_patient_data(with_PHD1 = FALSE)
+
+#read all groups of patients
+  all_dyad_patients <- read.csv("patients_with_dyad_with_PHD1.csv")
+  all_else_patients <- read.csv("patients_without_dyad_with_PHD1.csv")
+  all_dyad_patients_noPHD1 <- read.csv("patients_with_dyad_noPHD1.csv")
+  all_else_patients_noPHD1 <- read.csv("patients_without_dyad_noPHD1.csv")
+  
+  #n all patients
+  print(nrow(all_dyad_patients) + nrow(all_else_patients))
+  #n only those with no phd1
+  print(nrow(all_dyad_patients_noPHD1) + nrow(all_else_patients_noPHD1))
+  
+  print(nrow(all_dyad_patients_noPHD1))
+  print(nrow(all_else_patients_noPHD1))
+  print(nrow(all_dyad_patients))
+  print(nrow(all_else_patients))
+  
+#label as what kind of genotype they have
+  #this is ok because there are no nonsense heterozygotes in dataset
+  all_dyad_patients$genotype <- ifelse(all_dyad_patients$allele.1.protein == all_dyad_patients$allele.2.protein, "homozygous missense", "")
+  all_dyad_patients$genotype[all_dyad_patients$genotype == "" &
+                           (grepl("Ter", all_dyad_patients$allele.1.protein) |
+                            grepl("Ter", all_dyad_patients$allele.2.protein))] <-
+  "nonsense heterozygous"
+  
+   #same for all Else
+  all_else_patients$genotype <- ifelse(all_else_patients$allele.1.protein == all_else_patients$allele.2.protein, "homozygous missense", "")
+  all_else_patients$genotype[all_else_patients$genotype == "" &
+                           (grepl("Ter", all_else_patients$allele.1.protein) |
+                            grepl("Ter", all_else_patients$allele.2.protein))] <-
+  "nonsense heterozygous"
+  
+  #merge to get ALL 
+  all_patients <- rbind(all_dyad_patients, all_else_patients)
+  table(all_patients$genotype)
+  sum(table(all_patients$genotype))
+  #there are 5 in the no annotation bin that should be in the nonsense heterozygos bin. Because they have no allele 1. one is mising because they have no score
+```
+
+```{r test_maps_confirmCorrect, echo = FALSE}
+######make sure that processed and non-processed maps are identical
+###This is the mavedb map with all processing
+map_pr_option2 <- read.csv("20251110_finalScoreswEvidenceWeights_test.csv")
+#input map that was used previously
+map_original <- read.csv("20231018_WholeMap.csv")
+#these should match
+print(median(map_original$score))
+#these should also match
+print(median(map_pr_option2$se))
+print(median(map_original$se))
+```
+
+```{r reclassfication, echo = FALSE}
+#analysis for numbers in manuscript for how many variants could be reclassified based on functional evidence
+reclassed_table <- read.csv("ClinVar_reclassifications_EiBr_271025.csv")
+#extract variant
+reclassed_table$hgvs_pro <- sub(",.*", "", reclassed_table[,1])
+#count up results for all VUS
+VUSinitial <- reclassed_table[reclassed_table$ClinVar.Class == "VUS",]
+#frequency of each Final.class
+vus_counts <- table(VUSinitial$Final.class)
+#convert counts to percentages
+vus_percent <- prop.table(vus_counts) * 100
+#show percentage of each
+classes_of_VUS_reclass <- data.frame(
+  Final.class = names(vus_counts),
+  Count = as.vector(vus_counts),
+  Percent = round(as.vector(vus_percent), 2)
+)
+
+print(classes_of_VUS_reclass)
+
+#count up results for all LP/P
+Pinitial <- reclassed_table[reclassed_table$ClinVar.Class == "P"|reclassed_table$ClinVar.Class == "LP"|reclassed_table$ClinVar.Class == "P/LP",]
+#frequency of each Final.class
+P_counts <- table(Pinitial$Final.class)
+#convert counts to percentages
+P_percent <- prop.table(P_counts) * 100
+#show percentage of each
+classes_of_P_reclass <- data.frame(
+  Final.class = names(P_counts),
+  Count = as.vector(P_counts),
+  Percent = round(as.vector(P_percent), 2)
+)
+
+print(classes_of_P_reclass)
+
+#Processing conflicts
+conflict_initial <- reclassed_table[grepl("Conflicting", reclassed_table$ClinVar.Class),]
+#number with reclass
+table(conflict_initial$Final.class)
+
+
+#seems to be one missing from VUS after reclass, and one P, find out which
+variant_evidence_weight_table <- read.csv("20251110_finalScoreswEvidenceWeights_test.csv")
+variant_evidence_weight_table_P <- variant_evidence_weight_table[grepl("P",variant_evidence_weight_table$type) & !grepl("undetermined", variant_evidence_weight_table$evidence_weight),]
+not_in_Pinitial <- variant_evidence_weight_table_P$hgvs_pro[
+  !(variant_evidence_weight_table_P$hgvs_pro %in% Pinitial$hgvs_pro)
+]
+
+#why are three missing from evidence classifications for VUS
+variant_evidence_weight_table_VUS <- variant_evidence_weight_table[grepl("VUS",variant_evidence_weight_table$type) & !grepl("undetermined", variant_evidence_weight_table$evidence_weight),]
+variant_evidence_weight_table_VUS <- variant_evidence_weight_table_VUS[!grepl("p.Thr391Asn|p.Leu428Val", variant_evidence_weight_table_VUS$hgvs_pro),]
+not_in_VUSinitial <- variant_evidence_weight_table_VUS$hgvs_pro[
+  !(variant_evidence_weight_table_VUS$hgvs_pro %in% VUSinitial$hgvs_pro)
+]
+
+length(unique(variant_evidence_weight_table_VUS$hgvs_pro))
+nrow(variant_evidence_weight_table_VUS)
+
+```
+
+```{r countThings_forFinalNumbers_inManuscript, echo = FALSE}
+#This section answers questions in the manuscript text
+#Question: How many missense variants have scores?
+map_input <- read.csv("20251110_finalScoreswEvidenceWeights_test.csv", header=TRUE)
+#extract only missense variants
+map_input_missense <- map_input[!(grepl("Ter", map_input$hgvs_pro)|grepl("=", map_input$hgvs_pro)),]
+print(paste("The number of total missense variants with scores is", nrow(map_input_missense)))
+
+#Question: how many SNVs captured? total SNVs is called missense_df above
+map_input_missense_SNVs <- map_input_missense[map_input_missense$SNVaccessible == "yes",]
+nrow(map_input_missense_SNVs)
+nrow(missense_df)
+#percent of SNVs that have scores given by maps
+print(nrow(map_input_missense_SNVs)/nrow(missense_df))
+
+#Question: How many SNV-accessible missense variants have non-undetermined evidence strength?
+SNVaccesswEvidence <- map_input_missense[
+  !is.na(map_input_missense$evidence_weight) & 
+  map_input_missense$evidence_weight != "undetermined" &
+    map_input_missense$SNVaccessible == "yes",
+]
+nrow(SNVaccesswEvidence)/nrow(missense_df)
+#how many of those variants are VUS?
+VUS_SNVaccess <- SNVaccesswEvidence[which(SNVaccesswEvidence$ClinVarClass == "VUS"),]
+nrow(VUS_SNVaccess)/345
+
+#Question: How many current VUS have proactive evidence?
+VUS_table <- map_input_missense[which(map_input_missense$ClinVarClass == "VUS"),]
+#number of VUS with non-undetermined evidence
+VUSevidence <- sum(table(VUS_table$evidence_weight)[names(table(VUS_table$evidence_weight)) != "undetermined"])
+#total number of VUS in reference set
+clinvar <- read.csv("20250825_AIRE_missense_clinvar_result.csv")
+totalVUS <- sum(clinvar$Germline.classification == "Uncertain significance")
+VUSevidence/totalVUS
+#Question: how many missense variants in ClinVar are VUS? 
+clinvar_missense <- clinvar[grepl("missense variant", clinvar$Molecular.consequence),] 
+tbl <- table(clinvar_missense$Germline.classification)
+total_variants <- sum(tbl)
+vus_count <-  tbl["Uncertain significance"]
+vus_prop <- vus_count / total_variants
+vus_prop
+#Question: how many reference set variants had evidence towards the correct evidence direction? 
+#lollipop data is called labeled
+labeled <- labeled %>%
+  mutate(PHD1_variant = ifelse(pos >= 296 & pos <= 343, "Yes", "No"))
+totalRefVarwithTwoBioRep <- sum(table(labeled$clinvar,labeled$prediction_type))
+sumConcordantincludePHD1 <- sum(table(labeled$clinvar,labeled$prediction_type)[, c("Benign Concordant", "Pathogenic Concordant")])
+sumConcordantincludePHD1/totalRefVarwithTwoBioRep
+
+totalRefVarwithTwoBioRep_noPHD1 <- sum(table(labeled$clinvar[labeled$PHD1_variant == "No"],
+      labeled$prediction_type[labeled$PHD1_variant == "No"]))
+sumConcordant_noPHD1 <- sum(table(labeled$clinvar[labeled$PHD1_variant == "No"],
+      labeled$prediction_type[labeled$PHD1_variant == "No"])[, c("Benign Concordant", "Pathogenic Concordant")])
+sumConcordant_noPHD1/totalRefVarwithTwoBioRep_noPHD1
+
+#Question: how many missense AIRE variants that currently do not have a clinical classification got evidence? and how many have a caution flag?
+varCount <- map_input_missense[
+  is.na(map_input_missense$ClinVarClass) & 
+  !is.na(map_input_missense$evidence_weight) & 
+  map_input_missense$evidence_weight != "undetermined",
+]
+
+#totalvar with non undetermined evidence weight
+sum(table(varCount$evidence_weight))
+table(varCount$evidenceWeightConfidence)
+
+#Question: what are the counts and numbers of variants in classifications which were already noted as benign or pathogenic or vus? 
+benignVar <- map_input_missense[grepl("B/LB", map_input_missense$ClinVarClass),]
+PathVar <- map_input_missense[grepl("P/LP", map_input_missense$ClinVarClass),]
+ConflVar <- map_input_missense[grepl("Confli", map_input_missense$ClinVarClass),]
+VUSVarwevidence <- map_input_missense[
+  grepl("^VUS$", map_input_missense$ClinVarClass) &
+  !(grepl("undetermined", map_input_missense$evidence_weight)),
+]
+table(VUSVarwevidence$FinalClass)
+sum(table(VUSVarwevidence$FinalClass))
+table(VUSVarwevidence$Reclass)
+
+#Question: what is the domain breakdown of the VUS with evidence?
+#annotate VUS by domain
+VUSVarwevidence <- VUSVarwevidence %>%
+  mutate(Domain = case_when(
+    pos >= 1 & pos <= 105 ~ "CARD",
+    pos >= 181 & pos <= 280 ~ "SAND",
+    pos >= 296 & pos <= 343 ~ "PHD1",
+    pos >= 434 & pos <= 475 ~ "PHD2",
+    pos >= 515 & pos <= 545 ~ "C-term"
+  ))
+#patho evidence in VUS
+pathoEvVUS <- VUSVarwevidence[grepl("patho", VUSVarwevidence$evidence_weight),]
+#breakdown by domain
+table(pathoEvVUS$Domain)
+
+#Question: what is the percent of VUS with confident classifications?
+#general number of VUS reclass
+table(VUSVarwevidence$Reclass)
+#filter: reclass = "Yes" and no CAUTION
+VUS_yes_noCaution <- VUSVarwevidence %>%
+  filter(
+    Reclass == "Yes",
+    is.na(evidenceWeightConfidence) | evidenceWeightConfidence != "CAUTION"
+  )
+percent_yes_noCaution <- VUS_yes_noCaution %>%
+  summarise(percent = n() / nrow(VUSVarwevidence) * 100) %>%
+  pull(percent)
+percent_yes_noCaution
+nrow(VUS_yes_noCaution)
+
+#Question: Find damaging positions of the SAND domain in disordered section?
+map_positional_SAND <- map_positional[map_positional$from_aa >= 234 & map_positional$from_aa <= 280,]
+
+#Question: How many missense variants score >1? 
+map_input_missense_over1 <- map_input_missense[map_input_missense$score>1,]
+nrow(map_input_missense_over1)
+
+###question: how many missense variants above 1 are SNV-accessible?
+all_SNV_df_missense <- all_SNV_df[!(grepl("Ter", all_SNV_df$variant)|grepl("=", all_SNV_df$variant)),]
+SNV_accessible_hyper <- intersect(map_input_missense_over1$hgvs_pro, all_SNV_df_missense$variant)
+paste("Percent SNV-accessible hyper variants:", length(SNV_accessible_hyper)/nrow(all_SNV_df_missense)*100)
+
+#Question: Did the SNV-accessible variants score better than the non-SNV accessible missense variants? 
+bySNVAccessible <- ggplot(map_input_missense, aes(x = SNVaccessible, y = score)) + 
+  geom_boxplot() + 
+  theme_minimal(base_size = 15) + 
+  labs(x = "SNV accessibility", y = "variant functional score")
+
+# test significance
+snv_test <- wilcox.test(score ~ SNVaccessible, data = map_input_missense,
+                        mu = 0, alt = "two.sided", conf.int = TRUE, 
+                        conf.level = 0.95, correct = TRUE)
+print(snv_test)
+
+# Add significance to plot
+bySNVAccessible <- bySNVAccessible + 
+  stat_compare_means(comparisons = list(c("yes", "no")), 
+                     method = "wilcox.test", 
+                     label = "p.signif")
+
+print(bySNVAccessible)
+ggsave(filename = "by_snv_accessible.pdf", bySNVAccessible, width = 4, height = 5)
+```
+
+```{#r UKBB_analysis}
+#but script used for analysis is below without associated data
+#This script generates Figure 4C and Figure 4D
+
+#load packages
+library(ggVennDiagram)
+library(stringr)
+library(data.table)
+library(mgsub)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+
+####Prepare datasets and assign variables. Nothing needs to be modified past this section except see comp predictors below,
+#all files will save with date and frequency######
+#assign allele frequency of variants allowed in, for file names
+freq <- 0.0001
+#date for file names
+date <- "20251102_predOwn_LR"
+#score thresholds based on LLR annotations
+threshold <- c("0.371", "0.667") # Adjust as needed   
+#include PHD1? Make this equal to "" if including so that the file names save correctly. "no_PHD1" if not.
+#this will add to file names as well
+PHD1 <- ""
+
+#Load ICD10 codes and symptoms
+icd10_simple <- read.csv("phenotype_codes.csv", header = TRUE)
+
+#order of icd10_codes
+f <- factor(icd10_simple$symptom)
+#do the icd10 codes have tiers? if no, put "" else do tiered_phenotypes
+tier = "tiered_phenotypes"
+
+#load score set
+scores_raw <- read.csv("20231018_WholeMap.csv", header = TRUE)
+#load in the UKBB data (called UKBB later)
+
+#attach category labels to test set based on LLR thresholds
+scores_LLR_labelled <- scores_raw %>%
+  mutate(evidence_weight = case_when(
+    score <= -0.733 ~ "undetermined",
+    score > -0.733 & score <= -0.701 ~ "patho.support",
+    score > -0.701 & score <= -0.599 ~ "patho.moderate",
+    score > -0.599 & score <= -0.110 ~ "patho.strong",
+    score > -0.110 & score <= 0.150 ~ "patho.moderate",
+    score > 0.150 & score <= 0.371 ~ "patho.support",    
+    score > 0.371 & score <= 0.667 ~ "undetermined",
+    score > 0.667 & score <= 0.915 ~ "benign.support",
+    score > 0.915 & score <= 1.565 ~ "benign.strong",
+    score > 1.565 & score <= 1.699 ~ "benign.support",
+    score > 1.699 ~"undetermined"
+  ))
+
+#label score categories with threshold names
+scores_LLR_labelled$score_category <- "undetermined"
+scores_LLR_labelled$score_category[scores_LLR_labelled$score <= threshold[1]] <- "low"
+
+#####Process datasets#####
+#Score_set#
+#Change colname for score set
+names(scores_LLR_labelled)[names(scores_LLR_labelled) == 'hgvs_pro'] <- 'AA_change'
+#Change variant notation to match the UKBB amino acid change style
+scores_LLR_labelled$AA_change <- mgsub(scores_LLR_labelled$AA_change, pattern = c("Ala", "Arg", "Asn", "Asp", "Cys", "Gln",
+                                                                                  "Glu", "Gly", "His", "Ile", "Leu", "Lys",
+                                                                                  "Met", "Phe", "Pro", "Pyl", "Ser", "Sec",
+                                                                                  "Thr", "Trp", "Tyr", "Val", "=", "Ter"),
+                                       replacement = c("A", "R", "N", "D", "C", "Q", "E",
+                                                       "G", "H", "I", "L", "K", "M", "F", "P",
+                                                       "O", "S", "U", "T", "W", "Y", "V", "", "*"))
+#remove p. from notation
+scores_LLR_labelled$AA_change <- str_replace(scores_LLR_labelled$AA_change, "p.", "")
+
+#add column to scores to indicate if in PHD1 domain
+# prepare regular expression
+regexp <- "[[:digit:]]+"
+# process string
+scores_LLR_labelled$pos <- as.numeric(str_extract(scores_LLR_labelled$AA_change, regexp))
+if (PHD1 == "no_PHD1") {
+  # remove PHD1 domain
+  scores_LLR_labelled <- scores_LLR_labelled[!(scores_LLR_labelled$pos >= 296 & scores_LLR_labelled$pos <= 343),] }
+
+#UKBB#
+#remove unneeded columns in UKBB
+UKBB <- UKBB %>%
+  select(-c(Feature, Feature_type, chr, pos, cDNA_position, CDS_position, ref, alt, Codons))
+#Add AA change column
+UKBB$AA_change <- paste(substr(UKBB$Amino_acids, 1, 1),
+                        UKBB$Protein_position, substr(UKBB$Amino_acids, 3, 3), sep = "")
+
+####Eliminate participants with low-frequency missense variants without map scores from all groups####
+#Save this set to see what removed
+#merge the datasets to label the variants with corresponding scores. Keep everything in UKBB even if no score (all.x)
+UKBB_labelled <- merge(UKBB, scores_LLR_labelled, by = "AA_change", all.x = TRUE)
+
+##### Process AM #####
+#read in alphamissense scores and assign low-scoring variant category and high-scoring variant category
+AM <- read.csv("20240122_AM_maveDB.csv")
+names(AM)[names(AM) == 'am_class'] <- 'class'
+names(AM)[names(AM) == 'hgvs_pro'] <- 'AA_change'
+#convert the hgvs pro variants to amino acid code
+AM$AA_change <- mgsub(AM$AA_change, pattern = c("Ala", "Arg", "Asn", "Asp", "Cys", "Gln",
+                                                "Glu", "Gly", "His", "Ile", "Leu", "Lys",
+                                                "Met", "Phe", "Pro", "Pyl", "Ser", "Sec",
+                                                "Thr", "Trp", "Tyr", "Val", "Ter", "="),
+                      replacement = c("A", "R", "N", "D", "C", "Q", "E",
+                                      "G", "H", "I", "L", "K", "M", "F", "P",
+                                      "O", "S", "U", "T", "W", "Y", "V", "*", "="))
+#remove p.
+AM$AA_change <- sub("p.", "", AM$AA_change)
+#remove unneeded columns
+AM <- AM %>%
+  select(-c(uniprot_id))
+names(AM)[names(AM) == 'score'] <- 'comp_score'
+#Extract "pathogenic" AM variants
+AM_damaging <- AM[AM$class=="pathogenic",]
+names(AM_damaging)[names(AM_damaging) == 'score'] <- 'comp_score'
+
+##### Process REVEL #####
+REVEL <- read.table("dxigbB5erc0diVQG.txt", header= TRUE)
+REVEL <- REVEL[REVEL$Gene == "ENSG00000160224",]  
+REVEL <- REVEL[grepl("missense_variant", REVEL$Consequence), ]
+names(REVEL)[names(REVEL) == 'REVEL'] <- 'REVEL_score'
+
+#add AA_change column
+REVEL$AA_change <- paste(substr(REVEL$Amino_acids, 1, 1),
+                         REVEL$Protein_position, substr(REVEL$Amino_acids, 3, 3), sep = "")
+#only take the important columns for revel
+REVEL <- REVEL %>%
+  select(c(AA_change, REVEL_score))
+#rename cols to match
+names(REVEL)[names(REVEL) == 'REVEL_score'] <- 'comp_score'
+#add revel score class > 0.5
+REVEL <- REVEL %>%
+  mutate(class = case_when(
+    comp_score > 0.5 ~ "damaging"
+  ))
+#remove duplicate rows that happen because different datasets combined into the revel set
+REVEL <- REVEL[!duplicated(REVEL$AA_change), ]
+#extract test score class (damaging)
+REVEL_damaging <- REVEL[which(REVEL$class == "damaging"),]
+
+#####Find out how much variant overlap is in the set and are called damaging#####
+#extract low-scoring missense variants, no stops
+map_low_scores <- scores_LLR_labelled[scores_LLR_labelled$score_category == "low" & !grepl("[*]", scores_LLR_labelled$AA_change),]
+x <- list(map = map_low_scores$AA_change, alphaMissense = AM_damaging$AA_change, REVEL = REVEL_damaging$AA_change)
+plot <- ggVennDiagram(x) + scale_fill_gradient(low = "#F4FAFE", high = "#4981BF")
+# save the plot to a PDF file
+pdf(paste(date, PHD1, "low_scores_venn_unfiltered_noelimlowmap.pdf", sep = "_"), width = 6, height = 5)
+print(plot)
+dev.off()
+
+#####Prepare control set: extract known damaging from UKBB_labelled set and eliminate those participants from main set#####
+damaging_collect <- UKBB_labelled[grepl("frameshift_variant", UKBB_labelled$Consequence)|
+                                    grepl("splice_region_variant", UKBB_labelled$Consequence)|
+                                    grepl("inframe_insertion", UKBB_labelled$Consequence)|
+                                    grepl("start_lost", UKBB_labelled$Consequence)|
+                                    grepl("stop_gained", UKBB_labelled$Consequence),]
+#only include participants once in damaging set
+damaging_collect <- damaging_collect[!duplicated(damaging_collect$eid), ]
+#remove all people in entire set that have a damaging variant
+UKBB_labelled <- UKBB_labelled[!UKBB_labelled$eid %in% unique(damaging_collect$eid),]
+UKBB_labelled_missense <- UKBB_labelled[UKBB_labelled$Consequence == "missense_variant",]
+
+#label UKBB with computational predictor scores
+REVEL_UKBB_labelled <- merge(UKBB_labelled_missense, REVEL_damaging, by = "AA_change")
+AM_UKBB_labelled <- merge(UKBB_labelled_missense, AM_damaging, by = "AA_change")
+
+test_set <- UKBB_labelled_missense[UKBB_labelled_missense$score_category == "low",]
+
+#####Prepare test set######
+test_sets <- list(test_set, AM_UKBB_labelled, REVEL_UKBB_labelled)
+# filter each set for lower than frequency, but allow in no AF given by gnomAD
+filtered_test_sets <- lapply(test_sets, function(df) {
+  df[df$gnomAD_AF < freq | is.na(df$gnomAD_AF), ]
+})
+
+# Access the filtered data frames using their indices
+test_set <- filtered_test_sets[[1]]
+AM_test_set <- filtered_test_sets[[2]]
+REVEL_test_set <- filtered_test_sets[[3]]
+
+#extract the control set: those that are not in the test set
+filtered_control_sets <- lapply(test_sets, function(df) {
+  UKBB_labelled[!UKBB_labelled$eid %in% unique(df$eid),]
+})
+control_set <- filtered_control_sets[[1]]
+AM_control_set <- filtered_control_sets[[2]]
+REVEL_control_set <- filtered_control_sets[[3]]
+
+#remove duplicate eids in the control set (this maintains each participant once)
+control_set <- control_set[!duplicated(control_set$eid),]
+AM_control_set <- AM_control_set[!duplicated(AM_control_set$eid),]
+REVEL_control_set <- REVEL_control_set[!duplicated(REVEL_control_set$eid),]
+
+#are there people with more than one variant in the test set?
+#if yes, only keep the lowest-scoring variant
+if (nrow(test_set) != length(unique(test_set$eid))) {
+  test_set <- test_set %>%
+    group_by(eid) %>%
+    slice_min(score, n = 1, with_ties = FALSE) %>% # keeps only the row with min score
+    ungroup()
+}
+if (nrow(AM_test_set) != length(unique(AM_test_set$eid))) {
+  AM_test_set <- AM_test_set %>% group_by(eid) %>% slice(which.min(comp_score))
+}
+if (nrow(REVEL_test_set) != length(unique(REVEL_test_set$eid))) {
+  REVEL_test_set <- REVEL_test_set %>% group_by(eid) %>% slice(which.min(comp_score))
+}
+
+#combine the test sets with the damaging_collect sets, but need to make sure they have the same colnames
+#match column names
+common_cols <- intersect(names(REVEL_test_set), names(damaging_collect))
+# Select the common columns from each data frame
+test_set <- test_set[common_cols]
+damaging_collect <- damaging_collect[common_cols]
+AM_test_set <- AM_test_set[common_cols]
+REVEL_test_set <- REVEL_test_set[common_cols]
+
+#of these sets we want to compare these groups to the non-damaging group
+#bind the damaging with the test set scoring variants
+test_set_w_damaging <- rbind(test_set, damaging_collect)
+AM_w_damaging <- rbind(AM_test_set, damaging_collect)
+REVEL_w_damaging <- rbind(REVEL_test_set, damaging_collect)
+
+#combine all sets and unique the eids
+All_w_damaging <- rbind(test_set, AM_test_set, REVEL_test_set, damaging_collect)
+#Remove duplicate eids
+All_w_damaging <- All_w_damaging[!duplicated(All_w_damaging$eid),]
+#Prepare control set for everything other than all with damaging
+All_w_damaging_control <- UKBB_labelled[!UKBB_labelled$eid %in% All_w_damaging$eid,]
+All_w_damaging_control <- All_w_damaging_control[!duplicated(All_w_damaging_control$eid),]
+
+conditions_to_test <- list(damaging_collect, test_set_w_damaging, AM_w_damaging, REVEL_w_damaging, All_w_damaging)
+names(conditions_to_test) = c("cLOF", "cLOF or damaging map score",
+                              "cLOF or damaging AM score", "cLOF or damaging REVEL score", "cLOF or damaging map, AM or REVEL score")
+control_sets <- list(control_set, control_set, AM_control_set, REVEL_control_set, All_w_damaging_control)
+names(control_sets) = c("control set", "control set", "AM control set", "REVEL control set", "All control")
+
+new_row <- function(condition, icd_code) {
+  data.frame(condition = names(conditions_to_test)[condition],
+             symptom = icd10_simple$symptom[icd10_simple$ICD10code == icd_code],
+             phenotype = icd_code,
+             phenotype_tier = icd10_simple$tier[icd10_simple$ICD10code == icd_code],
+             obs_category_w_symptom = freq_in_category,
+             obs_category_wo_symptom = not_in_category,
+             obs_control_w_symptom = in_control,
+             obs_control_wo_symptom = not_in_control,
+             OR = OR,
+             SE_OR = SE_OR,
+             UppCI = UppCI,
+             LowCI = LowCI,
+             chi_p = chi_p,
+             fisher_p = fisher_p,
+             AA_obs = AA_obs,
+             AA_types = AA_types,
+             GTs=GTs,
+             stringsAsFactors = FALSE) 
+}
+
+#prepare empty odds ratio table
+odds_ratio_table <- data.frame(condition = character(), 
+                               symptom = character(),
+                               phenotype = character(), 
+                               phenotype_tier = numeric(),
+                               obs_category_w_symptom = numeric(),
+                               obs_category_wo_symptom = numeric(),
+                               obs_control_w_symptom = numeric(),
+                               obs_control_wo_symptom = numeric(),
+                               OR = numeric(), SE_OR = numeric(), 
+                               UppCI = numeric(), LowCI = numeric(),
+                               chi_p = numeric(), fisher_p = numeric(),
+                               AA_obs = character(),
+                               AA_types = character(),
+                               GTs=character(),
+                               stringsAsFactors = FALSE)
+
+
+#create odds ratio table
+for (condition in seq_along(conditions_to_test)) {
+  for (icd_code in icd10_simple$ICD10code) {
+    #count presence of symptom condition
+    obs <- conditions_to_test[[condition]]
+    #prepare which variants are the observations and their types
+    var_obs <- obs[grepl(icd_code, obs$X41270),]
+    
+    #concatenate the vector of obs and also their consequences into two variables to print in the table
+    AA_obs <- paste(var_obs$AA_change, collapse = ",")
+    AA_types <- paste(var_obs$Consequence, collapse = ",")
+    
+    #concatenate the vector of genotypes
+    GTs <- paste(var_obs$GT, collapse = ",")
+    
+    #calc the number of participants in each category
+    freq_in_category <- nrow(var_obs)
+    not_in_category <- nrow(obs) - freq_in_category
+    
+    control_used <- control_sets[[condition]]
+    in_control <- nrow(control_used[grepl(icd_code, control_used$X41270),])
+    #ntotal in set - number in damaging group - in control
+    not_in_control <- nrow(control_used) - in_control
+    
+    
+    #prepare oddsTable for each variant
+    oddsTable_var <- data.frame(symptom = c(freq_in_category, in_control),
+                                no_symptom = c(not_in_category, not_in_control),
+                                row.names = c("group", "control"))
+    
+    #calculate odds ratios
+    OR <- (oddsTable_var[1,1]/oddsTable_var[1,2])/(oddsTable_var[2,1]/oddsTable_var[2,2])
+    SE_OR <- sqrt(1/oddsTable_var[1,1]+1/oddsTable_var[1,2]+1/oddsTable_var[2,1]+1/oddsTable_var[2,2])
+    UppCI <- exp((log(OR)+1.96*SE_OR))
+    LowCI <- exp((log(OR)-1.96*SE_OR))
+    
+    #calculate p-value with chisq and also fisher's
+    #note that chi often puts error if not enough variant w symptom
+    fisher_p <- fisher.test(oddsTable_var)$p.value
+    chi_p <- chisq.test(oddsTable_var)$p.value
+    
+    new_row_to_append <- new_row(condition, icd_code)
+    
+    # Append the new row to the odds_ratio_table
+    odds_ratio_table <- rbind(odds_ratio_table, new_row_to_append)
+  }
+}
+
+#Save output
+write.csv(odds_ratio_table, file = paste(date, freq, PHD1, "UKBB_all_symp_low_noelim.csv", sep = "_"), row.names = FALSE)
+
+#eliminate rows that have no odds ratio
+odds_ratio_table_no0 <- odds_ratio_table[!odds_ratio_table$OR==0,]
+
+#####Plots#####
+#by phenotype tier
+if (tier == "tiered_phenotypes") {
+  tier1 <- odds_ratio_table_no0[odds_ratio_table_no0$phenotype_tier == 1,]
+  tier2 <- odds_ratio_table_no0[odds_ratio_table_no0$phenotype_tier == 2,]
+  
+  plot <- ggplot(tier1, aes(x = fct_inorder(symptom), y = OR, fill = condition)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(x = "Phenotype", y = "Odds Ratio", fill = "Score condition") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+  
+  # save the plot to a PDF file
+  pdf(paste(date, freq, PHD1, "tier1_grouped_odds_ratios.pdf", sep = "_"), width = 6, height = 5)
+  print(plot)
+  dev.off()
+  
+  plot <- ggplot(tier2, aes(x = fct_inorder(symptom), y = OR, fill = condition)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(x = "Phenotype", y = "Odds Ratio", fill = "Score condition") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  
+  # save the plot to a PDF file
+  pdf(paste(date, freq, "tier2_grouped_odds_ratios_noelim.pdf", sep = "_"), width = 6, height = 5)
+  print(plot)
+  dev.off()
+  
+  #Draw odds ratio as point ranges
+  plot <- ggplot(tier1, aes(symptom, log(OR))) +
+    geom_pointrange(
+      aes(ymin = log(LowCI), ymax = log(UppCI), color = condition),
+      position = position_dodge(0.9),
+      size = 0.2
+    )+
+    scale_x_discrete(limits = unique(tier1$symptom)) +
+    theme_classic() + 
+    coord_flip()
+  
+  # save the plot to a PDF file
+  pdf(paste(date, freq, PHD1, "tier1_pointrange_odds_ratios_noelim.pdf", sep = "_"), width = 12, height = 4)
+  print(plot)
+  dev.off()
+  
+  #Draw odds ratio as point ranges
+  plot <- ggplot(tier2, aes(symptom, log(OR))) +
+    geom_pointrange(
+      aes(ymin = log(LowCI), ymax = log(UppCI), color = condition),
+      position = position_dodge(0.9),
+      size = 0.2
+    )+
+    theme_classic() + 
+    scale_x_discrete(limits = unique(tier2$symptom)) +
+    coord_flip()
+  
+  # save the plot to a PDF file
+  pdf(paste(date, freq, PHD1, "tier2_pointrange_odds_ratios_noelim.pdf", sep = "_"), width = 12, height = 4)
+  print(plot)
+  dev.off()
+  
+  
+} else {
+  plot <- ggplot(odds_ratio_table_no0, aes(x = symptom, y = OR, fill = condition)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(x = "Phenotype", y = "Odds Ratio", fill = "Score condition") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+  
+  # save the plot to a PDF file
+  pdf(paste(date, freq, PHD1, "grouped_odds_ratios_noelim.pdf", sep = "_"), width = 6, height = 5)
+  print(plot)
+  dev.off()
+  
+  #Draw odds ratio as point ranges
+  plot <- ggplot(odds_ratio_table_no0, aes(symptom, OR)) +
+    geom_pointrange(
+      aes(ymin = LowCI, ymax = UppCI, color = condition),
+      position = position_dodge(0.9),
+      size = 0.2
+    ) +
+    theme_classic() + 
+    coord_flip()
+  
+  # save the plot to a PDF file
+  pdf(paste(date, freq, PHD1, "pointrange_odds_ratios_noelim.pdf", sep = "_"), width = 12, height = 4)
+  print(plot)
+  dev.off()
+}
+
+#What is the overlap between the test sets?
+#extract low-scoring missense variants, no stops
+x <- list(map = test_set$AA_change, alphaMissense = AM_test_set$AA_change, REVEL = REVEL_test_set$AA_change)
+plot <- ggVennDiagram(x) + scale_fill_gradient(low = "#F4FAFE", high = "#4981BF")
+
+# save the plot to a PDF file
+pdf(paste(date, PHD1, "low_scores_venn_filtered.pdf", sep = "_"), width = 6, height = 5)
+print(plot)
+dev.off()
+
+#Make same plots but log the ORs
+
+#Make hypoparathyroidism plot
+hypo_only <- odds_ratio_table_no0[odds_ratio_table_no0$symptom=="hypoparathyroidism",]
+
+#plot with log
+plot <- ggplot(hypo_only, aes(condition, log(OR))) +
+  geom_pointrange(
+    aes(ymin = log(LowCI), ymax = log(UppCI)),
+    position = position_dodge(0.9),
+    size = 0.2) +
+  theme_classic() + 
+  coord_flip() +
+  scale_y_continuous(breaks=seq(from = 0, to = 14, by = 1)) +
+  guides(color = FALSE)
+# save the plot to a PDF file
+ggsave(filename = paste(date, PHD1, "hypoparathyroidism_OR_logged.pdf", sep = "_"), plot, width = 6, height = 1.5)
+print(plot)
+
+#Make vitB12 plot
+vitB12_only <- odds_ratio_table_no0[odds_ratio_table_no0$symptom=="Vitamin B12 deficiency anaemia",]
+
+#plot with log
+plot2 <- ggplot(vitB12_only, aes(condition, log(OR))) +
+  geom_pointrange(
+    aes(ymin = log(LowCI), ymax = log(UppCI)),
+    position = position_dodge(0.9),
+    size = 0.2) +
+  theme_classic() + 
+  coord_flip() +
+  scale_y_continuous(breaks=seq(from = 0, to = 14, by = 1)) +
+  guides(color = FALSE)
+# save the plot to a PDF file
+ggsave(filename = paste(date, PHD1, "vitB12def_OR_logged.pdf", sep = "_"), plot2, width = 6, height = 1.5)
+print(plot2)
+```
+
+
+
